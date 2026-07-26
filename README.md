@@ -1,116 +1,116 @@
 # PhoneCam
 
-Use a **câmera do seu celular** como uma **webcam virtual** no PC — funciona em **Windows, macOS e Linux**. Compatível com Discord, OBS Studio, Zoom, Google Meet, Teams, Cheese e qualquer app que aceite dispositivos de webcam.
+Use your **phone's camera as a virtual webcam on your PC** — works on **Windows, macOS, and Linux**. Compatible with Discord, OBS Studio, Zoom, Google Meet, Teams, Cheese, and any app that accepts webcam devices.
 
-Sem app nativo no celular: tudo roda pelo navegador (Chrome, Safari, Firefox). Funciona em **Android e iPhone**.
+No native app on the phone: everything runs in the browser (Chrome, Safari, Firefox). Works on **Android and iPhone**.
 
-Suporte **opcional** a microfone do celular como microfone virtual no PC.
-
----
-
-## ✨ Características
-
-- 🌐 **Multiplataforma** — Windows 10+, macOS 11+, Ubuntu/Debian, Fedora, Arch Linux
-- 📱 **Sem app no celular** — abre uma página no navegador
-- 🍎 **Android + iPhone** — usa `getUserMedia` padrão Web
-- 🎥 **HD 1280×720 @ 30fps** (configurável até 1080p)
-- 📐 **Sem distorção** — crop inteligente (object-fit: cover) funciona em portrait e landscape
-- 🔍 **Zoom 1×–4×** — slider, botões +/−, **pinch-to-zoom** (gesto natural) e scroll do mouse
-- ✋ **Pan** — arraste o dedo sobre o vídeo quando estiver com zoom aplicado
-- 🎤 **Microfone do celular** — usa o mic do celular como microfone virtual no PC (opcional, `--audio`)
-- 🔒 **PIN de 6 dígitos** — ninguém na rede conecta sem autorização
-- 📲 **QR Code no terminal** — escaneie direto do PC com a câmera do celular
-- 💡 **Wake Lock** — mantém a tela do celular acesa enquanto transmite
-- 🔄 **Reconexão automática** — recupera sozinho de quedas de Wi-Fi ou tela apagada
-- 🔄 **Troca câmera frontal/traseira** com um toque
-- ⏸ **Pausar/retomar** stream sem desconectar
-- 📊 **FPS em tempo real** no celular e no PC
-- 🔌 **Webcam virtual** — via v4l2loopback (Linux) ou OBS Virtual Camera (Windows/macOS)
-- 💻 **CLI puro** — sem interface gráfica pesada
+**Optional** support for phone microphone as virtual microphone on PC.
 
 ---
 
-## 🏗 Arquitetura
+## ✨ Features
+
+- 🌐 **Cross-platform** — Windows 10+, macOS 11+, Ubuntu/Debian, Fedora, Arch Linux
+- 📱 **No app on phone** — opens a page in the browser
+- 🍎 **Android + iPhone** — uses standard Web `getUserMedia`
+- 🎥 **HD 1280×720 @ 30fps** (configurable up to 1080p)
+- 📐 **No distortion** — smart crop (object-fit: cover) works in portrait and landscape
+- 🔍 **Zoom 1×–4×** — slider, +/− buttons, **pinch-to-zoom** (natural gesture), and mouse scroll
+- ✋ **Pan** — drag finger over video when zoomed
+- 🎤 **Phone microphone** — uses phone mic as virtual mic on PC (optional, `--audio`)
+- 🔒 **6-digit PIN** — no one on the network connects without authorization
+- 📲 **QR Code in terminal** — scan directly from PC with phone camera
+- 💡 **Wake Lock** — keeps phone screen on while streaming
+- 🔄 **Auto-reconnect** — recovers from Wi-Fi drops or screen off
+- 🔄 **Front/back camera switch** with one tap
+- ⏸ **Pause/resume** stream without disconnecting
+- 📊 **Real-time FPS** on phone and PC
+- 🔌 **Virtual webcam** — via v4l2loopback (Linux) or OBS Virtual Camera (Windows/macOS)
+- 💻 **Pure CLI** — no heavy GUI
+
+---
+
+## 🏗 Architecture
 
 ```
-   Celular (navegador)                      PC (Win/Mac/Linux)
+   Phone (browser)                        PC (Win/Mac/Linux)
   ┌─────────────────────┐                ┌──────────────────────────┐
   │  getUserMedia()     │                │  FastAPI + uvicorn       │
   │  canvas.toBlob(JPEG)│ ──WebSocket──▶ │  /ws (binary frames)     │
-  │  ws.send(jpeg)      │                │  Pillow decodifica       │
+  │  ws.send(jpeg)      │                │  Pillow decodes          │
   └─────────────────────┘                │  pyvirtualcam.send(BGR)  │
-                                          │  → /dev/video10 (Linux) │
-                                          │  → OBS Virtual Cam (Win)│
-                                          │  → OBS Virtual Cam (Mac)│
+                                          │  → /dev/video10 (Linux)  │
+                                          │  → OBS Virtual Cam (Win) │
+                                          │  → OBS Virtual Cam (Mac) │
                                           └────────┬─────────────────┘
                                                    │
-                                          Discord / OBS / Zoom ──▶ webcam virtual
+                                          Discord / OBS / Zoom ──▶ virtual webcam
 ```
 
-**Backends por OS**:
+**Backends per OS**:
 
-| OS | Webcam virtual | Microfone virtual (opcional) |
-|----|----------------|------------------------------|
-| **Linux** | `v4l2loopback` (auto-instalado) | PulseAudio/PipeWire null sink (auto-criado) |
-| **Windows** | OBS Virtual Camera (instalar OBS Studio) | VB-Cable (instalar manualmente) |
-| **macOS** | OBS Virtual Camera (instalar OBS Studio) | BlackHole (instalar manualmente) |
+| OS | Virtual Webcam | Virtual Microphone (optional) |
+|----|----------------|-------------------------------|
+| **Linux** | `v4l2loopback` (auto-installed) | PulseAudio/PipeWire null sink (auto-created) |
+| **Windows** | OBS Virtual Camera (install OBS Studio) | VB-Cable (manual install) |
+| **macOS** | OBS Virtual Camera (install OBS Studio) | BlackHole (manual install) |
 
 ---
 
-## 📦 Instalação
+## 📦 Installation
 
-### Pré-requisitos
+### Prerequisites
 
-- **Python 3.9+** instalado (https://python.org)
-- Celular e PC na **mesma rede Wi-Fi**
-- Navegador moderno no celular (Chrome 90+, Safari 14+, Firefox 88+)
-- **No Windows/macOS**: instalar [OBS Studio](https://obsproject.com/download) e ativar "Virtual Camera" uma vez (para a webcam virtual funcionar)
-- **Para microfone do celular (opcional)**:
-  - Linux: nenhum extra (PulseAudio/PipeWire já vem instalado)
-  - Windows: instalar [VB-Cable](https://vb-audio.com/Cable/)
-  - macOS: instalar [BlackHole](https://existential.audio/blackhole/)
+- **Python 3.10+** installed (https://python.org)
+- Phone and PC on **same Wi-Fi network**
+- Modern browser on phone (Chrome 90+, Safari 14+, Firefox 88+)
+- **On Windows/macOS**: install [OBS Studio](https://obsproject.com/download) and enable "Virtual Camera" once (for virtual webcam to work)
+- **For phone microphone (optional)**:
+  - Linux: nothing extra (PulseAudio/PipeWire already installed)
+  - Windows: install [VB-Cable](https://vb-audio.com/Cable/)
+  - macOS: install [BlackHole](https://existential.audio/blackhole/)
 
 ### Windows
 
 ```cmd
-:: 1) Descompacte o phone-webcam em qualquer pasta
+:: 1) Extract phone-webcam to any folder
 cd phone-webcam
 
-:: 2) Instale (detecta tudo automaticamente)
+:: 2) Install (detects everything automatically)
 install.bat
 
-:: 3) Rode
+:: 3) Run
 run.bat
 ```
 
-### macOS e Linux
+### macOS and Linux
 
 ```bash
-# 1) Descompacte o phone-webcam em qualquer pasta
+# 1) Extract phone-webcam to any folder
 cd phone-webcam
 
-# 2) Torne os scripts executáveis (só na primeira vez)
+# 2) Make scripts executable (first time only)
 chmod +x install.sh run.sh install.py run.py
 
-# 3) Instale
+# 3) Install
 ./install.sh
 
-# 4) Rode
+# 4) Run
 ./run.sh
 ```
 
-### Instalação alternativa (qualquer OS, via Python direto)
+### Alternative installation (any OS, via Python directly)
 
 ```bash
-python install.py        # instala
-python run.py            # roda
+python install.py        # installs
+python run.py            # runs
 ```
 
 ---
 
-## 🚀 Uso
+## 🚀 Usage
 
-### Iniciar
+### Start
 
 ```bash
 # Linux/macOS
@@ -119,157 +119,157 @@ python run.py            # roda
 # Windows
 run.bat
 
-# Qualquer OS (via Python direto)
+# Any OS (via Python directly)
 python run.py
 ```
 
-O terminal exibirá algo como:
+Terminal will show something like:
 
 ```
 ================================================================
-  PhoneCam — Celular como Webcam no PC
+  PhoneCam — Phone as Webcam on PC
 ================================================================
 
   OS        : Linux
-  Resolução : 1280x720 @ 30fps
-  PIN acesso: 482910
-  Protocolo : HTTPS
+  Resolution: 1280x720 @ 30fps
+  PIN       : 482910
+  Protocol  : HTTPS
   Cert SSL  : /home/.../phonecam/certs/phonecam.pem
-  Microfone : desativado (use --audio para ativar)
+  Microphone: disabled (use --audio to enable)
 
-  ┌─ Escaneie o QR Code com a câmera do celular ─┐
-  │  (aponte para http://... acima se falhar)    │
-  └──────────────────────────────────────────────┘
+  ┌─ Scan QR Code with phone camera ─┐
+  │  (or use http://... above)       │
+  └──────────────────────────────────┘
 
       █▀▀▀▀▀█ ▄▄  ▄ ▀▄█ █▀▀▀▀▀█
       █ ███ █ █▄██▄█ ▀▄ █ ███ █
-      ... (QR Code renderizado em ASCII art)
+      ... (QR Code rendered as ASCII art)
 
-  URL embutida no QR: https://192.168.1.42:8765/
+  URL embedded in QR: https://192.168.1.42:8765/
 
-  ⚠  AVISO DE CERTIFICADO: o navegador vai mostrar 'Conexão não
-     segura'. É NORMAL — aceite para continuar.
+  ⚠  CERTIFICATE WARNING: browser will show 'Connection not
+     secure'. This is NORMAL — accept to continue.
 ```
 
-> **Por que HTTPS?** Navegadores só liberam `getUserMedia` (acesso à câmera) em contexto seguro (HTTPS ou `localhost`). O PhoneCam gera automaticamente um certificado SSL auto-assinado em `certs/` na primeira execução.
+> **Why HTTPS?** Browsers only allow `getUserMedia` (camera access) in secure contexts (HTTPS or `localhost`). PhoneCam auto-generates a self-signed SSL certificate in `certs/` on first run.
 
-### No celular
+### On Phone
 
-1. Conecte-se na **mesma rede Wi-Fi** do PC
-2. **Escaneie o QR Code** exibido no terminal do PC com a câmera do celular — o PIN já vem embutido na URL, então a página conecta **automaticamente** sem precisar digitar o PIN
-3. **Aceite o aviso de certificado**:
-   - **Chrome Android**: "Sua conexão não é privada" → "Avançado" → "Continuar para 192.168.x.x (não seguro)"
-   - **Safari iOS**: "Este site não é seguro" → "Mostrar detalhes" → "Visitar este site"
-   - **Firefox Android**: "Aviso de risco potencial" → "Avançado" → "Aceitar o risco e continuar"
-4. Se não escaneou o QR, abra `https://<ip-do-pc>:8765/?pin=XXXXXX` manualmente (ou digite o PIN na tela)
-5. Permita o acesso à câmera quando solicitado
-6. Pronto — a câmera está transmitindo
+1. Connect to **same Wi-Fi network** as PC
+2. **Scan QR Code** shown in PC terminal with phone camera — PIN is already embedded in URL, so page connects **automatically** without typing PIN
+3. **Accept certificate warning**:
+   - **Chrome Android**: "Your connection is not private" → "Advanced" → "Proceed to 192.168.x.x (unsafe)"
+   - **Safari iOS**: "This site is not secure" → "Show Details" → "Visit this website"
+   - **Firefox Android**: "Potential security risk" → "Advanced" → "Accept risk and continue"
+4. If you didn't scan QR, open `https://<pc-ip>:8765/?pin=XXXXXX` manually (or type PIN on screen)
+5. Allow camera access when prompted
+6. Done — camera is streaming
 
-### Nos apps (Discord, OBS, etc.)
+### In Apps (Discord, OBS, etc.)
 
-| App | Como selecionar a webcam |
-|-----|--------------------------|
-| **Discord** | Configurações → Voz e Vídeo → Dispositivo de vídeo → **OBS Virtual Camera** (Win/Mac) ou **PhoneCam** (Linux) |
-| **OBS** | + em Fontes → Dispositivo de captura de vídeo → **OBS Virtual Camera** ou **PhoneCam** |
-| **Zoom** | Settings → Video → Camera → **OBS Virtual Camera** ou **PhoneCam** |
-| **Google Meet / Teams** | Settings → Video → **OBS Virtual Camera** ou **PhoneCam** |
+| App | How to Select Webcam |
+|-----|----------------------|
+| **Discord** | Settings → Voice & Video → Video Device → **OBS Virtual Camera** (Win/Mac) or **PhoneCam** (Linux) |
+| **OBS** | + in Sources → Video Capture Device → **OBS Virtual Camera** or **PhoneCam** |
+| **Zoom** | Settings → Video → Camera → **OBS Virtual Camera** or **PhoneCam** |
+| **Google Meet / Teams** | Settings → Video → **OBS Virtual Camera** or **PhoneCam** |
 
-### Controles no celular
+### Phone Controls
 
-| Ação | Como fazer |
-|------|------------|
-| **Zoom in/out** | Slider, botões **−** / **+**, ou **pinch** com 2 dedos sobre o vídeo |
-| **Resetar zoom** | Botão **1.0×** (canto inferior direito) |
-| **Mover área zoomada** | Arraste 1 dedo sobre o vídeo (só funciona com zoom > 1×) |
-| **Trocar câmera** | Botão **🔄 Trocar câmera** |
-| **Pausar stream** | Botão **⏸ Pausar** |
-| **Microfone** | Botão **🎤 Microfone OFF/ON/MUTE** (só se `--audio` ativado) |
+| Action | How |
+|--------|-----|
+| **Zoom in/out** | Slider, **−** / **+** buttons, or **pinch** with 2 fingers on video |
+| **Reset zoom** | **1.0×** button (bottom right) |
+| **Move zoomed area** | Drag 1 finger over video (only works with zoom > 1×) |
+| **Switch camera** | **🔄 Switch camera** button |
+| **Pause stream** | **⏸ Pause** button |
+| **Microphone** | **🎤 Microphone OFF/ON/MUTE** button (only if `--audio` enabled) |
 
 ---
 
-## ⚙️ Opções de linha de comando
+## ⚙️ Command Line Options
 
 ```bash
-./run.sh [opções]        # Linux/macOS
-run.bat [opções]         # Windows
-python run.py [opções]   # qualquer OS
+./run.sh [options]        # Linux/macOS
+run.bat [options]         # Windows
+python run.py [options]   # any OS
 
-Opções:
-  --host 0.0.0.0       # Bind (default: 0.0.0.0 = todas as interfaces)
-  --port 8765          # Porta TCP (default: 8765)
-  --width 1280         # Largura (default: 1280)
-  --height 720         # Altura (default: 720)
-  --fps 30             # FPS alvo (default: 30)
-  --pin 123456         # PIN fixo (default: aleatório a cada execução)
-  --no-https           # Desativa HTTPS (SÓ para localhost; celulares exigem HTTPS)
-  --no-audio           # Desativa microfone do celular (áudio é LIGADO por padrão)
+Options:
+  --host 0.0.0.0       # Bind (default: 0.0.0.0 = all interfaces)
+  --port 8765          # TCP port (default: 8765)
+  --width 1280         # Width (default: 1280)
+  --height 720         # Height (default: 720)
+  --fps 30             # Target FPS (default: 30)
+  --pin 123456         # Fixed PIN (default: random each run)
+  --no-https           # Disable HTTPS (ONLY for localhost; phones require HTTPS)
+  --no-audio           # Disable phone microphone (audio is ON by default)
 ```
 
-### Exemplos
+### Examples
 
 ```bash
-# Padrão: vídeo HD + HTTPS + QR Code + microfone
+# Default: HD video + HTTPS + QR Code + microphone
 ./run.sh
 
-# Só vídeo (sem microfone do celular)
+# Video only (no phone microphone)
 ./run.sh --no-audio
 
 # Full HD 1080p
 ./run.sh --width 1920 --height 1080
 
-# Porta diferente + PIN fixo (útil para automação)
+# Different port + fixed PIN (useful for automation)
 ./run.sh --port 9000 --pin 246810
 
-# SD 480p (rede Wi-Fi fraca)
+# SD 480p (weak Wi-Fi)
 ./run.sh --width 640 --height 480 --fps 24
 
-# Testar localmente sem HTTPS (apenas este PC, sem celular)
+# Test locally without HTTPS (only this PC, no phone)
 ./run.sh --no-https --host 127.0.0.1
 ```
 
 ---
 
-## 🎤 Usando o microfone do celular
+## 🎤 Using Phone Microphone
 
-Por padrão, o PhoneCam já ativa **vídeo + microfone**. Para usar só vídeo, use `--no-audio`.
+By default, PhoneCam enables **video + microphone**. For video only, use `--no-audio`.
 
-### Pré-requisitos por OS
+### Prerequisites per OS
 
-| OS | Software necessário | Como instalar |
-|----|---------------------|---------------|
-| **Linux** | Nenhum extra | PulseAudio/PipeWire já vem instalado |
-| **Windows** | [VB-Cable](https://vb-audio.com/Cable/) | Baixe e rode `VBCABLE_Setup_x64.exe` como admin, reinicie o PC |
-| **macOS** | [BlackHole 2ch](https://existential.audio/blackhole/) | Baixe o .pkg e instale |
+| OS | Required Software | How to Install |
+|----|-------------------|----------------|
+| **Linux** | None extra | PulseAudio/PipeWire already installed |
+| **Windows** | [VB-Cable](https://vb-audio.com/Cable/) | Download and run `VBCABLE_Setup_x64.exe` as admin, reboot PC |
+| **macOS** | [BlackHole 2ch](https://existential.audio/blackhole/) | Download .pkg and install |
 
-### No celular
+### On Phone
 
-Depois de conectar (PIN + câmera), toque em **🎤 Microfone OFF**:
+After connecting (PIN + camera), tap **🎤 Microphone OFF**:
 
-- **1º toque**: liga o microfone (botão fica verde "🎤 Microfone ON")
-- **2º toque**: muta (botão fica "🔇 Microfone MUTE")
-- **3º toque**: desliga tudo (volta para "🎤 Microfone OFF")
+- **1st tap**: enables microphone (button turns green "🎤 Microphone ON")
+- **2nd tap**: mutes (button becomes "🔇 Microphone MUTE")
+- **3rd tap**: disables everything (back to "🎤 Microphone OFF")
 
-### Nos apps, selecione o microfone
+### In Apps, Select Microphone
 
-| OS | Nome do dispositivo no Discord/OBS/Zoom |
-|----|------------------------------------------|
-| **Linux** | **Monitor of PhoneCam Mic** (ou "PhoneCam Mic") |
+| OS | Device Name in Discord/OBS/Zoom |
+|----|---------------------------------|
+| **Linux** | **Monitor of PhoneCam Mic** (or "PhoneCam Mic") |
 | **Windows** | **CABLE Output** (VB-Audio Virtual Cable) |
 | **macOS** | **BlackHole 2ch** |
 
 ---
 
-## 🛠 Solução de problemas
+## 🛠 Troubleshooting
 
-### "malloc(): invalid size (unsorted)" no Linux (PyAudio crash)
+### "malloc(): invalid size (unsorted)" on Linux (PyAudio crash)
 
-Esse é um bug conhecido do **pyaudio 0.2.14 com Python 3.14 + PipeWire** no Linux. O PhoneCam agora tem **fallback automático** para `paplay` (PulseAudio CLI):
+Known bug in **pyaudio 0.2.14 with Python 3.14 + PipeWire** on Linux. PhoneCam has **automatic fallback** to `paplay` (PulseAudio CLI):
 
-1. Se o PyAudio crashar ao iniciar, o servidor automaticamente usa `paplay` como subprocess
-2. Você verá no log: `[OK] Microfone virtual criado: 'PhoneCam Mic' (via paplay CLI)`
-3. O áudio flui: celular → WS → stdin do paplay → null sink → Discord/OBS
+1. If PyAudio crashes on start, server automatically uses `paplay` as subprocess
+2. You'll see in log: `[OK] Virtual microphone created: 'PhoneCam Mic' (via paplay CLI)`
+3. Audio flows: phone → WS → paplay stdin → null sink → Discord/OBS
 
-O `paplay` faz parte do pacote `libpulse` (já vem instalado na maioria das distros). Se não estiver:
+`paplay` is part of `libpulse` (already installed on most distros). If missing:
 
 ```bash
 sudo pacman -S libpulse          # Arch
@@ -277,43 +277,43 @@ sudo apt install pulseaudio-utils  # Ubuntu/Debian
 sudo dnf install pulseaudio-utils  # Fedora
 ```
 
-### Spam de erros "ALSA lib pcm.c: Unknown PCM cards.pcm.rear"
+### "ALSA lib pcm.c: Unknown PCM cards.pcm.rear" spam
 
-É inofensivo. O PhoneCam agora **silencia automaticamente** esses warnings via `snd_lib_error_set_handler` no ALSA. Se ainda aparecerem, ignore — não afetam a funcionalidade.
+Harmless. PhoneCam now **auto-silences** these warnings via `snd_lib_error_set_handler` in ALSA. If they still appear, ignore — they don't affect functionality.
 
-### "Não foi possível criar a webcam virtual"
+### "Could not create virtual webcam"
 
-| OS | Solução |
-|----|---------|
+| OS | Solution |
+|----|----------|
 | **Linux** | `sudo modprobe v4l2loopback exclusive_caps=1 video_nr=10 card_label="PhoneCam"` |
-| **Windows** | Instale o [OBS Studio](https://obsproject.com/download), abra uma vez e ative "Start Virtual Camera" |
-| **macOS** | Instale o [OBS Studio](https://obsproject.com/download), abra uma vez e ative "Virtual Camera" |
+| **Windows** | Install [OBS Studio](https://obsproject.com/download), open once and enable "Start Virtual Camera" |
+| **macOS** | Install [OBS Studio](https://obsproject.com/download), open once and enable "Virtual Camera" |
 
-### "Câmera não abre no celular" / `getUserMedia undefined`
+### "Camera won't open on phone" / `getUserMedia undefined`
 
-Causa: navegador bloqueia câmera via HTTP remoto. **Solução**: use `https://` (com certificado auto-assinado — aceite o aviso). O PhoneCam já ativa HTTPS automaticamente.
+Cause: browser blocks camera via remote HTTP. **Solution**: use `https://` (with self-signed cert — accept warning). PhoneCam enables HTTPS automatically.
 
-### "Tela apagou e a câmera parou"
+### "Screen turned off and camera stopped"
 
-O PhoneCam tem duas defesas:
-1. **Wake Lock API** — tenta manter a tela acesa (Chrome Android 84+, Safari iOS 16.4+)
-2. **Reconexão automática** — se a conexão cair, tenta reconectar com backoff exponencial: 1s → 2s → 2s → 5s → 5s → 10s → 10s → 15s
+PhoneCam has two defenses:
+1. **Wake Lock API** — tries to keep screen on (Chrome Android 84+, Safari iOS 16.4+)
+2. **Auto-reconnect** — if connection drops, retries with exponential backoff: 1s → 2s → 2s → 5s → 5s → 10s → 10s → 15s
 
-Dicas:
-- Mantenha o celular plugado na tomada
-- Use Chrome Android para melhor suporte a Wake Lock
-- Desative otimização de bateria do navegador para o site
+Tips:
+- Keep phone plugged in
+- Use Chrome Android for best Wake Lock support
+- Disable browser battery optimization for the site
 
-### Discord não mostra a câmera (Linux)
+### Discord doesn't show camera (Linux)
 
-Discord exige `exclusive_caps=1` no v4l2loopback. Verifique:
+Discord requires `exclusive_caps=1` on v4l2loopback. Check:
 
 ```bash
 cat /sys/module/v4l2loopback/parameters/exclusive_caps
-# Deve imprimir: 1
+# Must print: 1
 ```
 
-Se imprimir `0`, descarregue e recarregue:
+If it prints `0`, unload and reload:
 
 ```bash
 sudo modprobe -r v4l2loopback
@@ -322,7 +322,7 @@ sudo modprobe v4l2loopback exclusive_caps=1 video_nr=10 card_label="PhoneCam"
 
 ### "incompatible constructor arguments" (pyvirtualcam)
 
-O `server.py` faz introspecção da assinatura via `inspect.signature()` e monta a chamada correta automaticamente. Se ainda assim falhar:
+`server.py` does signature introspection via `inspect.signature()` and builds the correct call automatically. If it still fails:
 
 ```bash
 # Linux/macOS
@@ -334,130 +334,130 @@ venv\Scripts\activate
 pip install --upgrade pyvirtualcam
 ```
 
-### Celular não consegue acessar a URL
+### Phone can't access URL
 
-1. Confirme que PC e celular estão na **mesma rede Wi-Fi** (não em redes isoladas como "Convidados")
-2. Verifique firewall:
-   - **Windows**: permitir porta 8765 no Windows Defender Firewall
-   - **Linux**: `sudo ufw allow 8765/tcp` (se usar UFW)
-   - **macOS**: System Settings → Network → Firewall → permitir
-3. Teste com `ping <ip-do-pc>` a partir do celular
+1. Confirm PC and phone are on **same Wi-Fi** (not isolated "Guest" networks)
+2. Check firewall:
+   - **Windows**: allow port 8765 in Windows Defender Firewall
+   - **Linux**: `sudo ufw allow 8765/tcp` (if using UFW)
+   - **macOS**: System Settings → Network → Firewall → allow
+3. Test with `ping <pc-ip>` from phone
 
-### Lag / baixo FPS
+### Lag / Low FPS
 
-- Reduza qualidade: `./run.sh --width 640 --height 480 --fps 24`
-- Use Wi-Fi 5GHz em vez de 2.4GHz
-- Feche outros apps que usem a rede no celular
-- Mantenha o celular próximo ao roteador
+- Reduce quality: `./run.sh --width 640 --height 480 --fps 24`
+- Use 5GHz Wi-Fi instead of 2.4GHz
+- Close other network apps on phone
+- Keep phone close to router
 
-### Listar dispositivos de vídeo (Linux)
+### List Video Devices (Linux)
 
 ```bash
 v4l2-ctl --list-devices
-# Deve mostrar:
+# Should show:
 # PhoneCam (platform:v4l2loopback-000):
 #   /dev/video10
 ```
 
-### Verificar se a câmera está funcionando
+### Verify Camera Works
 
-- **Linux**: `ffplay /dev/video10` ou `cheese --device /dev/video10`
-- **Windows/macOS**: abra o app Câmera nativo ou OBS Studio e selecione "OBS Virtual Camera"
+- **Linux**: `ffplay /dev/video10` or `cheese --device /dev/video10`
+- **Windows/macOS**: open native Camera app or OBS Studio and select "OBS Virtual Camera"
 
-### Listar dispositivos de áudio
+### List Audio Devices
 
 ```bash
 # Linux
-pactl list short sources    # mostra "Monitor of PhoneCam Mic"
+pactl list short sources    # shows "Monitor of PhoneCam Mic"
 
 # Windows (PowerShell)
-# Abra o Painel de Controle → Som → Gravação → deve mostrar "CABLE Output"
+# Open Control Panel → Sound → Recording → should show "CABLE Output"
 
 # macOS
-# System Settings → Sound → Input → deve mostrar "BlackHole 2ch"
+# System Settings → Sound → Input → should show "BlackHole 2ch"
 ```
 
 ---
 
-## 🗑 Desinstalar
+## 🗑 Uninstall
 
 ### Linux
 
 ```bash
-./uninstall.sh           # remove módulo v4l2loopback + configs
-rm -rf venv/             # remove deps Python
+./uninstall.sh           # removes v4l2loopback module + configs
+rm -rf venv/             # removes Python deps
 ```
 
 ### Windows / macOS
 
 ```bash
-# Remove o venv
+# Remove venv
 rm -rf venv/             # macOS/Linux
 rmdir /s /q venv         # Windows (cmd)
 
-# Para remover OBS Studio / VB-Cable / BlackHole, desinstale via Painel de Controle (Windows)
-# ou arraste o app para o Trash (macOS).
+# To remove OBS Studio / VB-Cable / BlackHole, uninstall via Control Panel (Windows)
+# or drag app to Trash (macOS).
 ```
 
 ---
 
-## 🔒 Segurança
+## 🔒 Security
 
-- O PIN é **aleatório a cada execução** (use `--pin` para fixar)
-- O servidor escuta em `0.0.0.0` — acessível a qualquer dispositivo na LAN
-- **Sem TLS com CA confiável** — frames trafegam com certificado auto-assinado. Para uso em rede corporativa/shared, considere tunnel SSH ou adicionar CA própria
-- Apenas **um celular conecta por vez** (conexões novas derrubam as anteriores)
-- Não há persistência de PIN, logs ou imagens — tudo é efêmero
+- PIN is **random per run** (use `--pin` to fix)
+- Server listens on `0.0.0.0` — accessible to any device on LAN
+- **No TLS with trusted CA** — frames travel with self-signed cert. For corporate/shared networks, consider SSH tunnel or add your own CA
+- Only **one phone connects at a time** (new connections drop previous)
+- No persistence of PIN, logs, or images — everything is ephemeral
 
 ---
 
-## 📁 Estrutura do projeto
+## 📁 Project Structure
 
 ```
-phone-webcam/
-├── server.py              # Servidor FastAPI + WebSocket + webcam/mic virtual
+phonecam/
+├── server.py              # FastAPI + WebSocket + virtual cam/mic
 ├── static/
-│   └── index.html         # Página mobile (getUserMedia + WS)
-├── requirements.txt       # Dependências Python
-├── install.py             # Instalador multiplataforma (Python)
-├── install.sh             # Wrapper bash para install.py (Linux/macOS)
-├── install.bat            # Wrapper cmd para install.py (Windows)
-├── run.py                 # Launcher multiplataforma (Python)
-├── run.sh                 # Wrapper bash para run.py (Linux/macOS)
-├── run.bat                # Wrapper cmd para run.py (Windows)
-├── uninstall.sh           # Remove módulo v4l2loopback (Linux only)
-└── README.md              # Este arquivo
+│   └── index.html         # Mobile page (getUserMedia + WS)
+├── requirements.txt       # Python dependencies
+├── install.py             # Cross-platform installer (Python)
+├── install.sh             # Bash wrapper for install.py (Linux/macOS)
+├── install.bat            # CMD wrapper for install.py (Windows)
+├── run.py                 # Cross-platform launcher (Python)
+├── run.sh                 # Bash wrapper for run.py (Linux/macOS)
+├── run.bat                # CMD wrapper for run.py (Windows)
+├── uninstall.sh           # Removes v4l2loopback module (Linux only)
+└── README.md              # This file
 ```
 
 ---
 
 ## ❓ FAQ
 
-**Funciona com iPhone?**
-Sim, via Safari 14+ ou Chrome iOS. A página usa APIs Web padrão.
+**Works with iPhone?**  
+Yes, via Safari 14+ or Chrome iOS. Page uses standard Web APIs.
 
-**Funciona em Windows 11?**
-Sim, testado no Windows 10 e 11. Requer OBS Studio instalado para a webcam virtual.
+**Works on Windows 11?**  
+Yes, tested on Windows 10 and 11. Requires OBS Studio installed for virtual webcam.
 
-**Funciona em Mac com Apple Silicon (M1/M2/M3)?**
-Sim, suporte nativo. Instale o OBS Studio for Apple Silicon.
+**Works on Mac with Apple Silicon (M1/M2/M3)?**  
+Yes, native support. Install OBS Studio for Apple Silicon.
 
-**Posso usar 4G em vez de Wi-Fi?**
-Não diretamente. O servidor escuta apenas na rede local. Para uso remoto, configure uma VPN (WireGuard/Tailscale) entre o celular e o PC.
+**Can I use 4G instead of Wi-Fi?**  
+Not directly. Server only listens on local network. For remote use, set up a VPN (WireGuard/Tailscale) between phone and PC.
 
-**Consume muita bateria do celular?**
-Sim — câmera + Wi-Fi + encoding JPEG contínuo. Recomendado celular conectado ao carregador para sessões longas.
+**Consumes lots of phone battery?**  
+Yes — camera + Wi-Fi + continuous JPEG encoding. Recommended: phone plugged in for long sessions.
 
-**Qual a latência típica?**
-- Vídeo: 80-180ms em Wi-Fi 5GHz
-- Áudio: 50-120ms
-- Em Wi-Fi 2.4GHz pode chegar a 300ms+
+**Typical latency?**  
+- Video: 80-180ms on 5GHz Wi-Fi
+- Audio: 50-120ms
+- On 2.4GHz Wi-Fi can reach 300ms+
 
-**Como funciona o wake lock?**
-A página usa `navigator.wakeLock.request("screen")` para pedir ao SO que mantenha a tela acesa. Suportado em Chrome Android 84+ e Safari iOS 16.4+.
+**How does wake lock work?**  
+Page uses `navigator.wakeLock.request("screen")` to ask OS to keep screen on. Supported in Chrome Android 84+ and Safari iOS 16.4+.
 
 ---
 
-## 📜 Licença
+## 📜 License
 
-MIT — use livremente. Attribution apreciada mas não obrigatória.
+MIT — use freely. Attribution appreciated but not required.

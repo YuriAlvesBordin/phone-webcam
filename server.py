@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
-"""
-PhoneCam - Use a câmera do celular como webcam virtual no Linux.
-
-Arquitetura:
-  - Servidor FastAPI + uvicorn escutando em 0.0.0.0:8765
-  - Página HTML servida em GET / para o celular capturar a câmera via getUserMedia
-  - WebSocket /ws?pin=XXXXXX recebe frames JPEG binários do celular
-  - Frames decodificados com Pillow e escritos em /dev/videoN via pyvirtualcam (v4l2loopback)
-
-Uso:
-  python server.py [--host 0.0.0.0] [--port 8765] [--width 1280] [--height 720] [--fps 30]
-"""
 
 import argparse
 import asyncio
 import datetime
 import io
 import ipaddress
-import math
 import os
 import platform
 import secrets
@@ -28,32 +15,24 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-# --------------------------------------------------------------------------- #
-# Detectação de OS
-# --------------------------------------------------------------------------- #
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS   = platform.system() == "Darwin"
-IS_LINUX   = platform.system() == "Linux"
-OS_NAME    = "Windows" if IS_WINDOWS else "macOS" if IS_MACOS else "Linux"
-
 try:
     import numpy as np
 except ImportError:
-    print("[ERRO] numpy não instalado. Rode: pip install -r requirements.txt", file=sys.stderr)
+    print("[ERROR] numpy not installed. Run: pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
 try:
     from PIL import Image
 except ImportError:
-    print("[ERRO] Pillow não instalado. Rode: pip install -r requirements.txt", file=sys.stderr)
+    print("[ERROR] Pillow not installed. Run: pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
 try:
     import uvicorn
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+    from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
     from fastapi.responses import FileResponse, JSONResponse
 except ImportError:
-    print("[ERRO] fastapi/uvicorn não instalados. Rode: pip install -r requirements.txt", file=sys.stderr)
+    print("[ERROR] fastapi/uvicorn not installed. Run: pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
 try:
@@ -61,8 +40,7 @@ try:
     HAS_PYVC = True
 except ImportError:
     HAS_PYVC = False
-    print("[AVISO] pyvirtualcam não instalado — webcam virtual desativada (modo debug).",
-          file=sys.stderr)
+    print("[WARNING] pyvirtualcam not installed — virtual webcam disabled (debug mode).", file=sys.stderr)
 
 try:
     import qrcode
@@ -70,18 +48,17 @@ try:
     HAS_QRCODE = True
 except ImportError:
     HAS_QRCODE = False
-    print("[AVISO] qrcode não instalado — QR Code desativado (rode: pip install qrcode[pil]).",
-          file=sys.stderr)
+    print("[WARNING] qrcode not installed — QR Code disabled (run: pip install qrcode[pil]).", file=sys.stderr)
 
 try:
-    # Silencia spam de warnings do ALSA quando enumerando dispositivos
-    # (ALSA imprime "Unknown PCM cards.pcm.rear" etc para cada dispositivo faltante)
+    # Silence ALSA warnings when enumerating devices
+    # (ALSA prints "Unknown PCM cards.pcm.rear" etc for each missing device)
     import ctypes
     try:
         _asound = ctypes.cdll.LoadLibrary("libasound.so.2")
         _c_error_handler = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int,
                                             ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
-        # Mantém referência global para não ser coletado pelo GC
+        # Keep global reference to prevent GC collection
         _alsa_silence_handler = _c_error_handler(lambda *_: None)
         _asound.snd_lib_error_set_handler(_alsa_silence_handler)
     except Exception:
@@ -93,16 +70,18 @@ except ImportError:
     HAS_PYAUDIO = False
 except Exception as e:
     HAS_PYAUDIO = False
-    print(f"[AVISO] pyaudio falhou ao inicializar ({e}) — áudio do celular desativado.",
-          file=sys.stderr)
+    print(f"[WARNING] pyaudio failed to initialize ({e}) — phone audio disabled.", file=sys.stderr)
 
+# OS detection
+IS_WINDOWS = platform.system() == "Windows"
+IS_MACOS   = platform.system() == "Darwin"
+IS_LINUX   = platform.system() == "Linux"
+OS_NAME    = "Windows" if IS_WINDOWS else "macOS" if IS_MACOS else "Linux"
 
-# --------------------------------------------------------------------------- #
-# Estado global
-# --------------------------------------------------------------------------- #
+# Global state
 class State:
     def __init__(self):
-        self.cam = None                  # pyvirtualcam.Camera (ou None)
+        self.cam = None
         self.client: WebSocket | None = None
         self.client_lock = asyncio.Lock()
         self.frames_received = 0
@@ -111,13 +90,13 @@ class State:
         self.current_fps = 0.0
         self.connected_since = 0.0
         self.client_addr = ""
-        self.native_fmt = "BGR"          # "BGR" ou "RGB", definido em init_virtual_cam
-        # Áudio
-        self.audio_out = None            # pyaudio.Stream (output) ou tupla CLI
-        self.audio_pa = None             # instância PyAudio
+        self.native_fmt = "BGR"
+        # Audio
+        self.audio_out = None
+        self.audio_pa = None
         self.audio_enabled = False
         self.audio_packets = 0
-        self._pw_loopback_proc = None    # subprocess do pw-loopback (PipeWire)
+        self._pw_loopback_proc = None
 
 
 state = State()
@@ -128,15 +107,10 @@ STATIC_DIR = BASE_DIR / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Cria webcam virtual + microfone virtual na inicialização e fecha no shutdown."""
     cfg = getattr(app.state, "cfg", None)
     if cfg and state.cam is None:
         state.cam = init_virtual_cam(cfg.width, cfg.height, cfg.fps)
     if cfg and getattr(cfg, "audio", False) and state.audio_out is None:
-        # setup_virtual_mic() retorna (pa_instance, audio_out) onde:
-        #   - audio_out é uma TUPLA ("paplay"|"pw-cat", proc) no Linux CLI
-        #   - audio_out é um pyaudio.Stream no Windows/macOS
-        #   - audio_out é None se falhou
         pa_instance, audio_out = setup_virtual_mic()
         state.audio_pa = pa_instance
         state.audio_out = audio_out
@@ -155,11 +129,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="PhoneCam", lifespan=lifespan)
 
 
-# --------------------------------------------------------------------------- #
-# Utilidades
-# --------------------------------------------------------------------------- #
+# Utilities
 def get_local_ips() -> list[str]:
-    """Lista os IPs IPv4 não-loopback do PC para o celular conectar."""
     ips: list[str] = []
     try:
         hostname = socket.gethostname()
@@ -171,7 +142,7 @@ def get_local_ips() -> list[str]:
     except Exception:
         pass
 
-    # Fallback: cria socket UDP para descobrir IP padrão de saída
+    # Fallback: create UDP socket to discover default outbound IP
     if not ips:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -179,19 +150,12 @@ def get_local_ips() -> list[str]:
             ips.append(s.getsockname()[0])
             s.close()
         except Exception:
-            ips.append("<seu-ip-aqui>")
+            ips.append("<your-ip-here>")
 
     return ips
 
 
 def ensure_ssl_cert(cert_dir: Path) -> tuple[Path, Path]:
-    """Gera um certificado SSL auto-assinado se não existir.
-
-    Tenta primeiro via biblioteca `cryptography` (mais portátil), e faz
-    fallback para o comando `openssl` se ela não estiver instalada.
-
-    Retorna (caminho_cert, caminho_key).
-    """
     cert_file = cert_dir / "phonecam.pem"
     key_file = cert_dir / "phonecam.key"
 
@@ -200,7 +164,7 @@ def ensure_ssl_cert(cert_dir: Path) -> tuple[Path, Path]:
 
     cert_dir.mkdir(parents=True, exist_ok=True)
 
-    # Coleta IPs locais para incluir no SAN (Subject Alternative Name)
+    # Collect local IPs for SAN (Subject Alternative Name)
     san_ips = [ipaddress.ip_address("127.0.0.1")]
     for ip in get_local_ips():
         try:
@@ -208,14 +172,14 @@ def ensure_ssl_cert(cert_dir: Path) -> tuple[Path, Path]:
         except ValueError:
             pass
 
-    # ---- Caminho 1: biblioteca cryptography (preferido) ----
+    # Path 1: cryptography library (preferred)
     try:
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
 
-        print(">>> Gerando certificado SSL auto-assinado (cryptography)…")
+        print(">>> Generating self-signed SSL certificate (cryptography)...")
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         subject = issuer = x509.Name([
             x509.NameAttribute(NameOID.COMMON_NAME, "PhoneCam"),
@@ -251,8 +215,8 @@ def ensure_ssl_cert(cert_dir: Path) -> tuple[Path, Path]:
     except ImportError:
         pass
 
-    # ---- Caminho 2: openssl CLI (fallback) ----
-    print(">>> Gerando certificado SSL auto-assinado (openssl)…")
+    # Path 2: openssl CLI (fallback)
+    print(">>> Generating self-signed SSL certificate (openssl)...")
     subprocess.run(
         [
             "openssl", "req", "-x509", "-newkey", "rsa:2048",
@@ -268,22 +232,13 @@ def ensure_ssl_cert(cert_dir: Path) -> tuple[Path, Path]:
 
 
 def init_virtual_cam(width: int, height: int, fps: int):
-    """Cria a webcam virtual (multiplataforma via pyvirtualcam).
-
-    Backends por OS:
-      - Linux:   v4l2loopback (precisa: sudo modprobe v4l2loopback exclusive_caps=1 video_nr=10)
-      - Windows: OBS Virtual Camera (instale o OBS Studio e ative "Start Virtual Camera" uma vez)
-      - macOS:   OBS Virtual Camera (instale o OBS Studio e ative "Start Virtual Camera" uma vez)
-
-    pyvirtualcam abstrai o backend automaticamente — só passamos width/height/fps/fmt.
-    """
     if not HAS_PYVC:
-        print("[AVISO] pyvirtualcam ausente — frames serão descartados (apenas debug).")
+        print("[WARNING] pyvirtualcam absent — frames will be discarded (debug only).")
         return None
 
     import inspect
 
-    # ---- Monta kwargs via introspecção da assinatura ----
+    # Build kwargs via signature introspection
     sig = inspect.signature(pyvirtualcam.Camera)
     params = set(sig.parameters.keys())
     kwargs = {"width": width, "height": height, "fps": fps}
@@ -300,51 +255,50 @@ def init_virtual_cam(width: int, height: int, fps: int):
     if "delay" in params:
         kwargs["delay"] = 0
 
-    # ---- Tenta criar a câmera ----
+    # Try to create camera
     try:
         cam = pyvirtualcam.Camera(**kwargs)
         state.native_fmt = native_fmt
-        print(f"[OK] Webcam virtual criada em: {cam.device}")
-        print(f"     Resolução: {width}x{height} @ {fps}fps")
+        print(f"[OK] Virtual webcam created at: {cam.device}")
+        print(f"     Resolution: {width}x{height} @ {fps}fps")
         print(f"     OS: {OS_NAME} | pyvirtualcam {getattr(pyvirtualcam, '__version__', '?')}")
         print(f"     (kwargs: {sorted(kwargs.keys())}, fmt: {native_fmt})")
         return cam
     except TypeError as e:
-        print(f"[AVISO] Assinatura pyvirtualcam incompatível ({e}); tentando fallbacks…")
+        print(f"[WARNING] pyvirtualcam signature incompatible ({e}); trying fallbacks...")
         last_err = e
     except RuntimeError as e:
-        # Dispositivo não existe — mostra instruções específicas do OS
         print()
-        print("[ERRO] Não foi possível criar a webcam virtual.")
-        print(f"       Causa: {e}")
+        print("[ERROR] Could not create virtual webcam.")
+        print(f"       Cause: {e}")
         print()
         _print_webcam_setup_instructions()
         return None
     except Exception as e:
         last_err = e
 
-    # ---- Fallbacks (só se TypeError) ----
+    # Fallbacks (only if TypeError)
     fallbacks = [
-        (dict(width=width, height=height, fps=fps, fmt=pyvirtualcam.PixelFormat.BGR), "BGR"),
-        (dict(width=width, height=height, fps=fps, fmt=pyvirtualcam.PixelFormat.RGB), "RGB"),
-        (dict(width=width, height=height, fps=fps, fmt=pyvirtualcam.PixelFormat.BGR, delay=0), "BGR"),
-        (dict(width=width, height=height, fps=fps, fourcc=0x32424752), "BGR"),
+        ({"width": width, "height": height, "fps": fps, "fmt": pyvirtualcam.PixelFormat.BGR}, "BGR"),
+        ({"width": width, "height": height, "fps": fps, "fmt": pyvirtualcam.PixelFormat.RGB}, "RGB"),
+        ({"width": width, "height": height, "fps": fps, "fmt": pyvirtualcam.PixelFormat.BGR, "delay": 0}, "BGR"),
+        ({"width": width, "height": height, "fps": fps, "fourcc": 0x32424752}, "BGR"),
     ]
 
     for fb_kwargs, fmt in fallbacks:
         try:
             cam = pyvirtualcam.Camera(**fb_kwargs)
             state.native_fmt = fmt
-            print(f"[OK] Webcam virtual criada em: {cam.device}")
-            print(f"     Resolução: {width}x{height} @ {fps}fps")
+            print(f"[OK] Virtual webcam created at: {cam.device}")
+            print(f"     Resolution: {width}x{height} @ {fps}fps")
             print(f"     Backend: pyvirtualcam (fallback, kwargs: {sorted(fb_kwargs.keys())}, fmt: {fmt})")
             return cam
         except TypeError:
             continue
         except RuntimeError as e:
             print()
-            print("[ERRO] Não foi possível criar a webcam virtual.")
-            print(f"       Causa: {e}")
+            print("[ERROR] Could not create virtual webcam.")
+            print(f"       Cause: {e}")
             print()
             _print_webcam_setup_instructions()
             return None
@@ -353,96 +307,93 @@ def init_virtual_cam(width: int, height: int, fps: int):
             continue
 
     print()
-    print("[ERRO] Não foi possível criar a webcam virtual.")
-    print(f"       Causa: {last_err}")
+    print("[ERROR] Could not create virtual webcam.")
+    print(f"       Cause: {last_err}")
     print()
     _print_webcam_setup_instructions()
     return None
 
 
 def _print_webcam_setup_instructions():
-    """Mostra instruções de setup da webcam virtual conforme o OS."""
-    print("Instruções de setup para webcam virtual:")
+    print("Virtual webcam setup instructions:")
     print()
     if IS_LINUX:
-        print("  Linux — carregue o módulo v4l2loopback:")
+        print("  Linux — load v4l2loopback module:")
         print()
         print("    sudo modprobe v4l2loopback exclusive_caps=1 \\")
-        print("         video_nr=10 card_label=\"PhoneCam\"")
+        print('         video_nr=10 card_label="PhoneCam"')
         print()
-        print("  Instalação do módulo:")
+        print("  Module installation:")
         print("    Arch Linux:    sudo pacman -S v4l2loopback-dkms")
         print("    Ubuntu/Debian: sudo apt install v4l2loopback-dkms")
         print("    Fedora:        sudo dnf install v4l2loopback")
     elif IS_WINDOWS:
-        print("  Windows — instale o OBS Studio (gratuito):")
+        print("  Windows — install OBS Studio (free):")
         print("    https://obsproject.com/download")
         print()
-        print("  Após instalar, ABRA o OBS Studio uma vez e inicie a")
-        print("  'Virtual Camera' (botão 'Start Virtual Camera' no painel").lstrip()
-        print("  de controles). Isso registra a DLL da câmera virtual no Windows.")
+        print("  After installing, OPEN OBS Studio once and start")
+        print("  'Virtual Camera' (button 'Start Virtual Camera' in the")
+        print("  controls panel). This registers the virtual camera DLL in Windows.")
         print()
-        print("  Depois feche o OBS — a DLL continua registrada.")
+        print("  Then close OBS — the DLL stays registered.")
         print()
-        print("  Alternativa sem OBS: instalar 'Unity Capture' ou 'OBS-VirtualCam'")
-        print("  standalone (procure no GitHub).")
+        print("  Alternative without OBS: install 'Unity Capture' or 'OBS-VirtualCam'")
+        print("  standalone (search GitHub).")
     elif IS_MACOS:
-        print("  macOS — instale o OBS Studio (gratuito):")
+        print("  macOS — install OBS Studio (free):")
         print("    https://obsproject.com/download")
         print()
-        print("  Após instalar, ABRA o OBS Studio uma vez e inicie a")
-        print("  'Virtual Camera'. Isso registra o plugin de câmera virtual.")
+        print("  After installing, OPEN OBS Studio once and start")
+        print("  'Virtual Camera'. This registers the virtual camera plugin.")
         print()
-        print("  Nota: no macOS Sonoma+ pode ser necessário conceder permissão")
-        print("  de câmera ao OBS em System Settings → Privacy & Security → Camera.")
+        print("  Note: on macOS Sonoma+ you may need to grant camera")
+        print("  permission to OBS in System Settings → Privacy & Security → Camera.")
     else:
-        print(f"  OS não reconhecido: {OS_NAME}")
+        print(f"  Unrecognized OS: {OS_NAME}")
     print()
 
 
-# --------------------------------------------------------------------------- #
-# Microfone virtual (PulseAudio / PipeWire)
-# --------------------------------------------------------------------------- #
-# Estratégia: criar um "null sink" no PulseAudio (ou PipeWire via pactl)
-# com nome "PhoneCam Mic" e monitor-lo. O pyaudio abre o stream de output
-# nesse sink. Aplicativos (Discord, OBS) selecionam "PhoneCam Mic Monitor"
-# como dispositivo de captura para receber o áudio do celular.
+# Virtual microphone (PulseAudio / PipeWire)
+# Strategy: create a "null sink" in PulseAudio (or PipeWire via pactl)
+# named "PhoneCam Mic" and monitor it. PyAudio opens output stream
+# on that sink. Apps (Discord, OBS) select "PhoneCam Mic Monitor"
+# as capture device to receive phone audio.
 #
 # PulseAudio:
 #   pacmd load-module module-null-sink sink_name=phonecam_mic \
 #       sink_properties=device.description="PhoneCam Mic"
 #
-# PipeWire (com pactl que fala o protocolo pipewire-pulse):
-#   Mesmo comando funciona, mas também cria automaticamente um monitor.
+# PipeWire (with pactl speaking pipewire-pulse protocol):
+#   Same command works, but also auto-creates a monitor.
 
-AUDIO_SAMPLE_RATE = 48000   # 48kHz — padrão para chamadas/streams
-AUDIO_CHANNELS = 1          # mono
-AUDIO_CHUNK_MS = 20         # 20ms por chunk -> 50 chunks/s (latência baixa)
+AUDIO_SAMPLE_RATE = 48000
+AUDIO_CHANNELS = 1
+AUDIO_CHUNK_MS = 20
 
 
 def setup_virtual_mic():
-    """Cria microfone virtual (multiplataforma).
+    """Create virtual microphone (cross-platform).
 
-    Estratégia por OS:
-      - Linux:   cria null sink no PulseAudio/PipeWire via `pactl`
-      - macOS:   NÃO cria automaticamente — usuário precisa instalar BlackHole
-                 (https://existential.audio/blackhole/). PyAudio abre o dispositivo.
-      - Windows: NÃO cria automaticamente — usuário precisa instalar VB-Cable
-                 (https://vb-audio.com/Cable/). PyAudio abre o dispositivo.
+    Strategy per OS:
+      - Linux:   create null sink in PulseAudio/PipeWire via `pactl`
+      - macOS:   DOES NOT create automatically — user must install BlackHole
+                 (https://existential.audio/blackhole/). PyAudio opens device.
+      - Windows: DOES NOT create automatically — user must install VB-Cable
+                 (https://vb-audio.com/Cable/). PyAudio opens device.
 
-    Retorna (pyaudio_instance, pyaudio_stream) ou (None, None) se falhar.
+    Returns (pyaudio_instance, pyaudio_stream) or (None, None) if failed.
     """
     if not HAS_PYAUDIO:
-        print("[AVISO] pyaudio não instalado — áudio do celular desativado.")
-        print("        Instale com: pip install pyaudio")
+        print("[WARNING] pyaudio not installed — phone audio disabled.")
+        print("        Install with: pip install pyaudio")
         if IS_LINUX:
-            print("        E no Arch: sudo pacman -S portaudio")
+            print("        And on Arch: sudo pacman -S portaudio")
             print("        Ubuntu:     sudo apt install portaudio19-dev")
             print("        Fedora:     sudo dnf install portaudio-devel")
         elif IS_MACOS:
-            print("        E no Mac:   brew install portaudio")
+            print("        And on Mac:   brew install portaudio")
         elif IS_WINDOWS:
-            print("        No Windows o pyaudio geralmente já vem com wheel pré-compilado.")
+            print("        On Windows pyaudio usually comes with pre-compiled wheel.")
         return None, None
 
     if IS_LINUX:
@@ -452,46 +403,45 @@ def setup_virtual_mic():
     elif IS_WINDOWS:
         return _setup_mic_windows()
     else:
-        print(f"[AVISO] OS não suportado para áudio: {OS_NAME}")
+        print(f"[WARNING] OS not supported for audio: {OS_NAME}")
         return None, None
 
 
 def _setup_mic_linux():
-    """Linux: cria null sink + virtual source para o Discord ver como microfone.
+    """Linux: create null sink + virtual source for Discord to see as microphone.
 
-    Arquitetura:
-      null sink "phonecam_mic_sink" (OUTPUT) ← pw-cat toca PCM aqui
-              ↓ (monitor interno)
-      virtual source "PhoneCam Mic" (INPUT)  ← Discord/OBS seleciona como microfone
+    Architecture:
+      null sink "phonecam_mic_sink" (OUTPUT) ← pw-cat plays PCM here
+              ↓ (internal monitor)
+      virtual source "PhoneCam Mic" (INPUT)  ← Discord/OBS selects as microphone
 
-    Isso resolve o problema do Discord não listar "Monitor of ..." como
-    dispositivo de entrada. Com virtual source, o Discord vê "PhoneCam Mic"
-    direto como um microfone.
+    This solves Discord not listing "Monitor of ..." as input device.
+    With virtual source, Discord sees "PhoneCam Mic" directly as a microphone.
     """
-    sink_name = "phonecam_mic_sink"        # nome interno do sink (output)
-    source_name = "phonecam_mic"           # nome interno do source (input)
-    source_desc = "PhoneCam Mic"           # descrição amigável (aparece no Discord)
+    sink_name = "phonecam_mic_sink"
+    source_name = "phonecam_mic"
+    source_desc = "PhoneCam Mic"
 
     if not _has_pulseaudio():
-        print("[AVISO] Nenhum servidor PulseAudio/PipeWire detectado — áudio desativado.")
+        print("[WARNING] No PulseAudio/PipeWire server detected — audio disabled.")
         return None, None
 
-    print(f">>> Criando microfone virtual '{source_desc}' no PulseAudio/PipeWire…")
-    # 1) Cria null sink (onde o pw-cat vai tocar o áudio)
+    print(f">>> Creating virtual microphone '{source_desc}' in PulseAudio/PipeWire...")
+    # 1) Create null sink (where pw-cat will play audio)
     _create_null_sink_retryable(sink_name, "PhoneCam Mic Sink")
-    # 2) Cria virtual source (o que apps vão selecionar como microfone)
+    # 2) Create virtual source (what apps will select as microphone)
     _create_virtual_source_retryable(source_name, source_desc, f"{sink_name}.monitor")
 
-    # Toca áudio no null sink via pw-cat/paplay
+    # Play audio into null sink via pw-cat/paplay
     return _setup_mic_linux_fallback_paplay(sink_name, source_desc)
 
 
 def _setup_mic_linux_fallback_paplay(sink_name: str, sink_desc: str):
-    """Usa pw-cat (PipeWire nativo) ou paplay (PulseAudio CLI) para tocar PCM.
+    """Use pw-cat (PipeWire native) or paplay (PulseAudio CLI) to play PCM.
 
-    Prioridade:
-      1. pw-cat (nativo do PipeWire, mais confiável no Arch/Fedora modernos)
-      2. paplay (compatibilidade PulseAudio, funciona em sistemas mais antigos)
+    Priority:
+      1. pw-cat (native PipeWire, more reliable on modern Arch/Fedora)
+      2. paplay (PulseAudio compatibility, works on older systems)
     """
     import shutil
     import threading
@@ -501,7 +451,7 @@ def _setup_mic_linux_fallback_paplay(sink_name: str, sink_desc: str):
 
     if pwcat:
         # pw-cat --playback --target phonecam_mic --format s16 --rate 48000 --channels 1 --raw
-        # --target diz ao pw-cat qual sink usar (por nome)
+        # --target tells pw-cat which sink to use (by name)
         cmd = [
             pwcat, "--playback",
             "--target", sink_name,
@@ -522,19 +472,19 @@ def _setup_mic_linux_fallback_paplay(sink_name: str, sink_desc: str):
             f"--device={sink_name}",
             "--stream-name=PhoneCam",
             "--client-name=PhoneCam",
-            "--volume=65536",   # volume máximo (PulseAudio usa 0-65536)
+            "--volume=65536",
         ]
         tool_name = "paplay"
     else:
-        print("[!] Nem 'pw-cat' nem 'paplay' encontrados no PATH.")
-        print("    Instale um deles:")
+        print("[!] Neither 'pw-cat' nor 'paplay' found in PATH.")
+        print("    Install one of them:")
         print("      Arch (PipeWire): sudo pacman -S pipewire")
         print("      Ubuntu:          sudo apt install pulseaudio-utils")
         print("      Fedora:          sudo dnf install pipewire pulseaudio-utils")
         return None, None
 
-    print(f">>> Iniciando {tool_name}…")
-    print(f"    comando: {' '.join(cmd)}")
+    print(f">>> Starting {tool_name}...")
+    print(f"    command: {' '.join(cmd)}")
     try:
         proc = subprocess.Popen(
             cmd,
@@ -543,10 +493,10 @@ def _setup_mic_linux_fallback_paplay(sink_name: str, sink_desc: str):
             stderr=subprocess.PIPE,
         )
     except Exception as e:
-        print(f"[!] Não foi possível iniciar {tool_name}: {e}")
+        print(f"[!] Could not start {tool_name}: {e}")
         return None, None
 
-    # Thread para ler stderr e logar (para diagnóstico)
+    # Thread to read stderr and log (for diagnostics)
     def _log_stderr():
         try:
             for line in iter(proc.stderr.readline, b""):
@@ -557,7 +507,7 @@ def _setup_mic_linux_fallback_paplay(sink_name: str, sink_desc: str):
             pass
     threading.Thread(target=_log_stderr, daemon=True, name=f"{tool_name}-stderr").start()
 
-    # Verifica se o processo está vivo
+    # Verify process is alive
     import time as _time
     _time.sleep(0.5)
     if proc.poll() is not None:
@@ -565,25 +515,23 @@ def _setup_mic_linux_fallback_paplay(sink_name: str, sink_desc: str):
             err = proc.stderr.read().decode("utf-8", errors="replace").strip()
         except Exception:
             err = ""
-        print(f"[!] {tool_name} terminou imediatamente (exit code {proc.returncode})")
+        print(f"[!] {tool_name} exited immediately (exit code {proc.returncode})")
         if err:
             print(f"    stderr: {err}")
-        # Se pw-cat falhou, tenta paplay como fallback
+        # If pw-cat failed, try paplay as fallback
         if tool_name == "pw-cat" and paplay:
-            print("    Tentando paplay como fallback…")
+            print("    Trying paplay as fallback...")
             return _setup_mic_linux_fallback_paplay_paplay_only(sink_name, sink_desc, paplay)
         return None, None
 
-    print(f"[OK] Microfone virtual criado: '{sink_desc}' (via {tool_name})")
+    print(f"[OK] Virtual microphone created: '{sink_desc}' (via {tool_name})")
     print(f"     Sample rate: {AUDIO_SAMPLE_RATE}Hz, mono, 16-bit PCM")
-    print(f"     Use 'Monitor of {sink_desc}' como dispositivo de captura em Discord/OBS/Zoom.")
-    # Retorna (pa_instance=None, audio_out=tuple)
-    # audio_out é uma tupla (tool_name, proc) para o write_audio_chunk detectar
+    print(f"     Use 'Monitor of {sink_desc}' as capture device in Discord/OBS/Zoom.")
     return (None, (tool_name, proc))
 
 
 def _setup_mic_linux_fallback_paplay_paplay_only(sink_name: str, sink_desc: str, paplay: str):
-    """Fallback: usa apenas paplay (quando pw-cat falha)."""
+    """Fallback: use only paplay (when pw-cat fails)."""
     import threading
 
     cmd = [
@@ -596,13 +544,13 @@ def _setup_mic_linux_fallback_paplay_paplay_only(sink_name: str, sink_desc: str,
         "--stream-name=PhoneCam",
         "--client-name=PhoneCam",
     ]
-    print(f">>> Iniciando paplay (fallback)…")
+    print(">>> Starting paplay (fallback)...")
     try:
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
     except Exception as e:
-        print(f"[!] Não foi possível iniciar paplay: {e}")
+        print(f"[!] Could not start paplay: {e}")
         return None, None
 
     def _log_stderr():
@@ -622,40 +570,40 @@ def _setup_mic_linux_fallback_paplay_paplay_only(sink_name: str, sink_desc: str,
             err = proc.stderr.read().decode("utf-8", errors="replace").strip()
         except Exception:
             err = ""
-        print(f"[!] paplay terminou imediatamente (exit code {proc.returncode})")
+        print(f"[!] paplay exited immediately (exit code {proc.returncode})")
         if err:
             print(f"    stderr: {err}")
         return None, None
 
-    print(f"[OK] Microfone virtual criado: '{sink_desc}' (via paplay)")
+    print(f"[OK] Virtual microphone created: '{sink_desc}' (via paplay)")
     print(f"     Sample rate: {AUDIO_SAMPLE_RATE}Hz, mono, 16-bit PCM")
-    print(f"     Use 'Monitor of {sink_desc}' como dispositivo de captura em Discord/OBS/Zoom.")
+    print(f"     Use 'Monitor of {sink_desc}' as capture device in Discord/OBS/Zoom.")
     return (None, ("paplay", proc))
 
 
 def _setup_mic_macos():
-    """macOS: usuário instala BlackHole 2ch (https://existential.audio/blackhole/).
+    """macOS: user installs BlackHole 2ch (https://existential.audio/blackhole/).
 
-    PyAudio então abre o BlackHole como output device.
-    Apps selecionam "BlackHole 2ch" como microfone.
+    PyAudio then opens BlackHole as output device.
+    Apps select "BlackHole 2ch" as microphone.
     """
-    print(">>> macOS: procurando BlackHole (instale de https://existential.audio/blackhole/)…")
+    print(">>> macOS: looking for BlackHole (install from https://existential.audio/blackhole/)...")
     try:
         pa = pyaudio.PyAudio()
     except Exception as e:
-        print(f"[!] Erro ao inicializar PyAudio: {e}")
+        print(f"[!] Error initializing PyAudio: {e}")
         return None, None
 
-    # Procura por dispositivo BlackHole
+    # Find BlackHole device
     blackhole_idx = _find_device_by_name(pa, "BlackHole", output=True)
     if blackhole_idx is None:
-        print("[!] BlackHole não encontrado. Instale:")
-        print("    1) Baixe em: https://existential.audio/blackhole/")
-        print("    2) Instale o pacote .pkg")
-        print("    3) Reinicie o servidor de áudio: sudo killall coreaudiod")
-        print("    4) Rode novamente: ./run.py --audio")
+        print("[!] BlackHole not found. Install:")
+        print("    1) Download from: https://existential.audio/blackhole/")
+        print("    2) Install the .pkg")
+        print("    3) Restart audio server: sudo killall coreaudiod")
+        print("    4) Run again: ./run.py --audio")
         print()
-        print("    Alternativa: Loopback (https://rogueamoeba.com/loopback/) — pago.")
+        print("    Alternative: Loopback (https://rogueamoeba.com/loopback/) — paid.")
         return pa, None
 
     try:
@@ -667,41 +615,41 @@ def _setup_mic_macos():
             output_device_index=blackhole_idx,
             frames_per_buffer=int(AUDIO_SAMPLE_RATE * AUDIO_CHUNK_MS / 1000),
         )
-        print(f"[OK] Saída de áudio aberta em BlackHole (device #{blackhole_idx})")
+        print(f"[OK] Audio output opened on BlackHole (device #{blackhole_idx})")
         print(f"     Sample rate: {AUDIO_SAMPLE_RATE}Hz, mono, 16-bit PCM")
-        print(f"     Use 'BlackHole 2ch' como dispositivo de captura em Discord/OBS/Zoom.")
+        print("     Use 'BlackHole 2ch' as capture device in Discord/OBS/Zoom.")
         return pa, stream
     except Exception as e:
-        print(f"[!] Erro ao abrir BlackHole: {e}")
+        print(f"[!] Error opening BlackHole: {e}")
         return pa, None
 
 
 def _setup_mic_windows():
-    """Windows: usuário instala VB-Cable (https://vb-audio.com/Cable/).
+    """Windows: user installs VB-Cable (https://vb-audio.com/Cable/).
 
-    PyAudio abre o "CABLE Input" como output. Apps selecionam "CABLE Output"
-    como microfone.
+    PyAudio opens "CABLE Input" as output. Apps select "CABLE Output"
+    as microphone.
     """
-    print(">>> Windows: procurando VB-Cable (instale de https://vb-audio.com/Cable/)…")
+    print(">>> Windows: looking for VB-Cable (install from https://vb-audio.com/Cable/)...")
     try:
         pa = pyaudio.PyAudio()
     except Exception as e:
-        print(f"[!] Erro ao inicializar PyAudio: {e}")
+        print(f"[!] Error initializing PyAudio: {e}")
         return None, None
 
-    # Procura por "CABLE Input" (VB-Audio Virtual Cable)
+    # Find "CABLE Input" (VB-Audio Virtual Cable)
     cable_idx = _find_device_by_name(pa, "CABLE Input", output=True)
     if cable_idx is None:
-        # Tenta também "VB-Audio"
+        # Try also "VB-Audio"
         cable_idx = _find_device_by_name(pa, "VB-Audio", output=True)
     if cable_idx is None:
-        print("[!] VB-Cable não encontrado. Instale:")
-        print("    1) Baixe em: https://vb-audio.com/Cable/")
-        print("    2) Descompacte e rode VBCABLE_Setup_x64.exe como administrador")
-        print("    3) Reinicie o PC")
-        print("    4) Rode novamente: python run.py --audio")
+        print("[!] VB-Cable not found. Install:")
+        print("    1) Download from: https://vb-audio.com/Cable/")
+        print("    2) Extract and run VBCABLE_Setup_x64.exe as admin")
+        print("    3) Reboot PC")
+        print("    4) Run again: python run.py --audio")
         print()
-        print("    Alternativa: VoiceMeeter (https://vb-audio.com/Voicemeeter/) — mais recursos.")
+        print("    Alternative: VoiceMeeter (https://vb-audio.com/Voicemeeter/) — more features.")
         return pa, None
 
     try:
@@ -713,17 +661,17 @@ def _setup_mic_windows():
             output_device_index=cable_idx,
             frames_per_buffer=int(AUDIO_SAMPLE_RATE * AUDIO_CHUNK_MS / 1000),
         )
-        print(f"[OK] Saída de áudio aberta em VB-Cable Input (device #{cable_idx})")
+        print(f"[OK] Audio output opened on VB-Cable Input (device #{cable_idx})")
         print(f"     Sample rate: {AUDIO_SAMPLE_RATE}Hz, mono, 16-bit PCM")
-        print(f"     Use 'CABLE Output' como dispositivo de captura em Discord/OBS/Zoom.")
+        print("     Use 'CABLE Output' as capture device in Discord/OBS/Zoom.")
         return pa, stream
     except Exception as e:
-        print(f"[!] Erro ao abrir VB-Cable: {e}")
+        print(f"[!] Error opening VB-Cable: {e}")
         return pa, None
 
 
 def _find_device_by_name(pa, name_pattern: str, output: bool = True) -> int | None:
-    """Procura um device cujo nome contenha name_pattern (case-insensitive)."""
+    """Find device index whose name contains name_pattern (case-insensitive)."""
     try:
         for i in range(pa.get_device_count()):
             info = pa.get_device_info_by_index(i)
@@ -734,12 +682,12 @@ def _find_device_by_name(pa, name_pattern: str, output: bool = True) -> int | No
                 if not output and info.get("maxInputChannels", 0) > 0:
                     return i
     except Exception as e:
-        print(f"[!] Erro ao procurar device: {e}")
+        print(f"[!] Error searching device: {e}")
     return None
 
 
 def _has_pulseaudio() -> bool:
-    """Verifica se pactl está disponível e consegue falar com o servidor."""
+    """Check if pactl is available and can talk to server."""
     try:
         r = subprocess.run(
             ["pactl", "info"],
@@ -753,29 +701,29 @@ def _has_pulseaudio() -> bool:
 
 
 def _create_null_sink_retryable(sink_name: str, sink_desc: str):
-    """Cria o null sink de forma idempotente.
+    """Create null sink idempotently.
 
-    Se já existe um sink com esse nome, descarrega e recria para garantir
-    que o formato (channels/rate) está correto.
+    If sink with that name already exists, unload and recreate to ensure
+    correct format (channels/rate).
     """
-    # 1) Verifica se já existe e descarrega se existir (para recriar com formato correto)
+    # 1) Check if exists and unload if so (to recreate with correct format)
     try:
         r = subprocess.run(
             ["pactl", "list", "short", "modules"],
             capture_output=True, text=True, timeout=3,
         )
-        # Procura o module-null-sink com nosso sink_name e descarrega
+        # Find module-null-sink with our sink_name and unload
         for line in r.stdout.split("\n"):
             if "module-null-sink" in line and f"sink_name={sink_name}" in line:
                 module_id = line.split()[0]
-                print(f"    (descarregando módulo antigo #{module_id} para recriar com formato correto)")
+                print(f"    (unloading old module #{module_id} to recreate with correct format)")
                 subprocess.run(["pactl", "unload-module", module_id],
                               capture_output=True, timeout=3)
                 break
     except Exception:
         pass
 
-    # 2) Cria via module-null-sink com formato explícito
+    # 2) Create via module-null-sink with explicit format
     cmd = [
         "pactl", "load-module",
         "module-null-sink",
@@ -788,26 +736,26 @@ def _create_null_sink_retryable(sink_name: str, sink_desc: str):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
         if r.returncode != 0:
-            print(f"[!] pactl falhou: {r.stderr.strip() or r.stdout.strip()}")
+            print(f"[!] pactl failed: {r.stderr.strip() or r.stdout.strip()}")
         else:
-            print(f"    [OK] sink criado (module id: {r.stdout.strip()})")
+            print(f"    [OK] sink created (module id: {r.stdout.strip()})")
     except Exception as e:
-        print(f"[!] Erro ao criar null sink: {e}")
+        print(f"[!] Error creating null sink: {e}")
 
 
 def _create_virtual_source_retryable(source_name: str, source_desc: str, master: str):
-    """Cria um virtual source (INPUT device) que lê do master source.
+    """Create virtual source (INPUT device) that reads from master source.
 
-    Tenta duas abordagens:
-    1. module-virtual-source (PulseAudio clássico) — funciona na maioria dos sistemas
-    2. pw-loopback (PipeWire nativo) — alternativa mais moderna
+    Tries two approaches:
+    1. module-virtual-source (classic PulseAudio) — works on most systems
+    2. pw-loopback (PipeWire native) — modern alternative
 
     Args:
-        source_name: nome interno (ex: "phonecam_mic")
-        source_desc: descrição amigável (ex: "PhoneCam Mic")
-        master: source master para ler (ex: "phonecam_mic_sink.monitor")
+        source_name: internal name (e.g., "phonecam_mic")
+        source_desc: friendly name (e.g., "PhoneCam Mic")
+        master: master source to read from (e.g., "phonecam_mic_sink.monitor")
     """
-    # 1) Verifica se já existe e descarrega
+    # 1) Check if exists and unload
     try:
         r = subprocess.run(
             ["pactl", "list", "short", "modules"],
@@ -816,18 +764,18 @@ def _create_virtual_source_retryable(source_name: str, source_desc: str, master:
         for line in r.stdout.split("\n"):
             if "module-virtual-source" in line and f"source_name={source_name}" in line:
                 module_id = line.split()[0]
-                print(f"    (descarregando virtual source antigo #{module_id})")
+                print(f"    (unloading old virtual source #{module_id})")
                 subprocess.run(["pactl", "unload-module", module_id],
                               capture_output=True, timeout=3)
                 break
     except Exception:
         pass
 
-    # 2) Cria via module-virtual-source
-    # Props importantes para PipeWire reconhecer como microfone:
-    #   - device.description: nome amigável
-    #   - media.class: Audio/Source (necessário no PipeWire)
-    #   - device.icon_name: aparece com ícone de microfone
+    # 2) Create via module-virtual-source
+    # Important props for PipeWire to recognize as microphone:
+    #   - device.description: friendly name
+    #   - media.class: Audio/Source (required in PipeWire)
+    #   - device.icon_name: shows microphone icon
     cmd = [
         "pactl", "load-module",
         "module-virtual-source",
@@ -844,35 +792,35 @@ def _create_virtual_source_retryable(source_name: str, source_desc: str, master:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
         if r.returncode != 0:
-            print(f"[!] module-virtual-source falhou: {r.stderr.strip() or r.stdout.strip()}")
-            print(f"    Tentando pw-loopback (PipeWire nativo)…")
+            print(f"[!] module-virtual-source failed: {r.stderr.strip() or r.stdout.strip()}")
+            print("    Trying pw-loopback (PipeWire native)...")
             if _create_pw_loopback(source_name, source_desc, master):
-                print(f"    [OK] pw-loopback criado")
+                print("    [OK] pw-loopback created")
             else:
-                print(f"    [!] pw-loopback também falhou")
-                print(f"    Alternativa: use 'Monitor of {master.split('.')[0]}' como microfone")
+                print("    [!] pw-loopback also failed")
+                print(f"    Alternative: use 'Monitor of {master.split('.')[0]}' as microphone")
         else:
-            print(f"    [OK] virtual source criado (module id: {r.stdout.strip()})")
-            print(f"    Selecione '{source_desc}' como dispositivo de ENTRADA no Discord/OBS/Zoom")
+            print(f"    [OK] virtual source created (module id: {r.stdout.strip()})")
+            print(f"    Select '{source_desc}' as INPUT device in Discord/OBS/Zoom")
     except Exception as e:
-        print(f"[!] Erro ao criar virtual source: {e}")
+        print(f"[!] Error creating virtual source: {e}")
 
 
 def _create_pw_loopback(source_name: str, source_desc: str, master: str) -> bool:
-    """Cria um source virtual via pw-loopback (PipeWire nativo).
+    """Create virtual source via pw-loopback (PipeWire native).
 
-    pw-loopback cria um nodo que captura de `master` e reproduz em um
-    novo nodo virtual. Para que esse nodo apareça como INPUT device
-    (microfone) no Discord, configuramos media.class=Audio/Source.
+    pw-loopback creates a node that captures from `master` and plays back
+    to a new virtual node. To make that node appear as INPUT device
+    (microphone) in Discord, we configure media.class=Audio/Source.
     """
-    import shutil
     import json as _json
+    import shutil
 
     pw_loopback = shutil.which("pw-loopback")
     if not pw_loopback:
         return False
 
-    # Props do nodo de playback (que vira o "microfone virtual")
+    # Props for playback node (becomes the "virtual microphone")
     playback_props = _json.dumps({
         "node.name": source_name,
         "node.description": source_desc,
@@ -880,7 +828,7 @@ def _create_pw_loopback(source_name: str, source_desc: str, master: str) -> bool
         "device.icon_name": "audio-input-microphone",
         "device.description": source_desc,
     })
-    # Props do nodo de capture (escondido)
+    # Props for capture node (hidden)
     capture_props = _json.dumps({
         "node.name": f"{source_name}_capture",
         "media.class": "Audio/Sink",
@@ -893,7 +841,7 @@ def _create_pw_loopback(source_name: str, source_desc: str, master: str) -> bool
         f"--capture-props={capture_props}",
     ]
 
-    print(f"    comando pw-loopback: {' '.join(cmd[:4])} ...")
+    print(f"    pw-loopback command: {' '.join(cmd[:4])} ...")
     try:
         proc = subprocess.Popen(
             cmd,
@@ -903,7 +851,7 @@ def _create_pw_loopback(source_name: str, source_desc: str, master: str) -> bool
         import time as _t
         _t.sleep(0.8)
         if proc.poll() is None:
-            # Salva o proc para cleanup no shutdown
+            # Save proc for cleanup on shutdown
             state._pw_loopback_proc = proc
             return True
         else:
@@ -915,35 +863,35 @@ def _create_pw_loopback(source_name: str, source_desc: str, master: str) -> bool
                 pass
             return False
     except Exception as e:
-        print(f"    [!] Exceção ao iniciar pw-loopback: {e}")
+        print(f"    [!] Exception starting pw-loopback: {e}")
         return False
 
 
 def _find_sink_device(pa, sink_desc: str) -> int | None:
-    """Encontra o device index (PyAudio) do monitor do sink 'PhoneCam Mic'.
+    """Find PyAudio device index of monitor of sink 'PhoneCam Mic'.
 
-    PyAudio lista cada sink + seu monitor como devices separados.
-    Procuramos pelo device de OUTPUT chamado 'PhoneCam Mic' — escrever nele
-    faz o som ir para o null sink, e o monitor correspondente é o que os apps
-    selecionam como "microfone".
+    PyAudio lists each sink + its monitor as separate devices.
+    We look for OUTPUT device called 'PhoneCam Mic' — writing to it
+    sends sound to null sink, and corresponding monitor is what apps
+    select as "microphone".
     """
     try:
         for i in range(pa.get_device_count()):
             info = pa.get_device_info_by_index(i)
             name = info.get("name", "")
-            desc = info.get("name", "")  # PyAudio traz name, não description
-            # Procura tanto por sink_name quanto por descrição
+            desc = info.get("name", "")  # PyAudio brings name, not description
+            # Search by both sink_name and description
             if "phonecam" in name.lower() or "phonecam" in desc.lower():
-                # Verifica se é output (maxOutputChannels > 0)
+                # Verify it's output (maxOutputChannels > 0)
                 if info.get("maxOutputChannels", 0) > 0:
                     return i
     except Exception as e:
-        print(f"[!] Erro ao procurar sink: {e}")
+        print(f"[!] Error finding sink: {e}")
     return None
 
 
 def _is_cli_audio(state_obj) -> bool:
-    """Verifica se o audio_out é um subprocess CLI (pw-cat ou paplay)."""
+    """Check if audio_out is a CLI subprocess (pw-cat or paplay)."""
     return (
         isinstance(state_obj, tuple)
         and len(state_obj) == 2
@@ -952,9 +900,9 @@ def _is_cli_audio(state_obj) -> bool:
 
 
 def teardown_audio():
-    """Fecha stream e instância PyAudio. Não descarrega o módulo (outros
-    apps podem estar usando o monitor)."""
-    # Mata pw-loopback se existir
+    """Close stream and PyAudio instance. Does not unload module (other
+    apps may be using the monitor)."""
+    # Kill pw-loopback if exists
     if state._pw_loopback_proc is not None:
         try:
             state._pw_loopback_proc.terminate()
@@ -969,7 +917,7 @@ def teardown_audio():
     if state.audio_out is None:
         return
 
-    # Caso especial: subprocess CLI (pw-cat ou paplay)
+    # Special case: CLI subprocess (pw-cat or paplay)
     if _is_cli_audio(state.audio_out):
         _, proc = state.audio_out
         try:
@@ -985,7 +933,7 @@ def teardown_audio():
         state.audio_out = None
         return
 
-    # Caminho normal: PyAudio
+    # Normal path: PyAudio
     if state.audio_out:
         try:
             state.audio_out.stop_stream()
@@ -1002,23 +950,23 @@ def teardown_audio():
 
 
 def write_audio_chunk(data: bytes) -> bool:
-    """Escreve um chunk PCM no dispositivo de áudio virtual.
+    """Write PCM chunk to virtual audio device.
 
-    Retorna True se OK, False se houve erro (deve fechar conexão).
-    Lida com ambos os caminhos: PyAudio stream e CLI subprocess (pw-cat/paplay).
+    Returns True if OK, False if error (should close connection).
+    Handles both paths: PyAudio stream and CLI subprocess (pw-cat/paplay).
     """
     if state.audio_out is None:
         return False
 
-    # Caso especial: subprocess CLI (pw-cat ou paplay)
+    # Special case: CLI subprocess (pw-cat or paplay)
     if _is_cli_audio(state.audio_out):
         tool_name, proc = state.audio_out
         try:
             if proc.poll() is not None:
-                print(f"[!] {tool_name} morreu (exit code {proc.returncode})")
-                # Tenta reiniciar
+                print(f"[!] {tool_name} died (exit code {proc.returncode})")
+                # Try restart
                 if _restart_paplay():
-                    print(f"[OK] {tool_name} reiniciado — tentando escrever novamente")
+                    print(f"[OK] {tool_name} restarted — trying write again")
                     _, proc = state.audio_out
                     proc.stdin.write(data)
                     proc.stdin.flush()
@@ -1028,37 +976,37 @@ def write_audio_chunk(data: bytes) -> bool:
             proc.stdin.flush()
             return True
         except (BrokenPipeError, OSError, ValueError) as e:
-            print(f"[!] Erro ao escrever no stdin do {tool_name}: {type(e).__name__}: {e}")
-            # CLI provavelmente morreu — tenta reiniciar
+            print(f"[!] Error writing to {tool_name} stdin: {type(e).__name__}: {e}")
+            # CLI probably died — try restart
             if _restart_paplay():
-                print(f"[OK] reiniciado — tentando escrever novamente")
+                print("[OK] restarted — trying write again")
                 try:
                     _, proc = state.audio_out
                     proc.stdin.write(data)
                     proc.stdin.flush()
                     return True
                 except Exception as e2:
-                    print(f"[!] Falha mesmo após reiniciar: {e2}")
+                    print(f"[!] Failed even after restart: {e2}")
             return False
         except Exception as e:
-            print(f"[!] Erro inesperado ao escrever áudio: {type(e).__name__}: {e}")
+            print(f"[!] Unexpected error writing audio: {type(e).__name__}: {e}")
             return False
 
-    # Caminho normal: PyAudio
+    # Normal path: PyAudio
     try:
         state.audio_out.write(data)
         return True
     except Exception as e:
-        print(f"[!] Erro ao escrever no PyAudio stream: {e}")
+        print(f"[!] Error writing to PyAudio stream: {e}")
         return False
 
 
 def _restart_paplay() -> bool:
-    """Reinicia o subprocess CLI (pw-cat ou paplay) se ele morreu."""
+    """Restart CLI subprocess (pw-cat or paplay) if it died."""
     if not IS_LINUX:
         return False
     try:
-        # Mata o processo antigo se ainda estiver rodando
+        # Kill old process if still running
         if _is_cli_audio(state.audio_out):
             _, old_proc = state.audio_out
             try:
@@ -1068,8 +1016,8 @@ def _restart_paplay() -> bool:
             except Exception:
                 pass
 
-        # Cria novo subprocess tocando no null sink (não no virtual source)
-        # _setup_mic_linux_fallback_paplay retorna (None, (tool_name, proc))
+        # Create new subprocess playing to null sink (not virtual source)
+        # _setup_mic_linux_fallback_paplay returns (None, (tool_name, proc))
         pa_instance, audio_out = _setup_mic_linux_fallback_paplay("phonecam_mic_sink", "PhoneCam Mic")
         if audio_out is not None:
             state.audio_pa = pa_instance
@@ -1077,21 +1025,21 @@ def _restart_paplay() -> bool:
             return True
         return False
     except Exception as e:
-        print(f"[!] Erro ao reiniciar CLI de áudio: {e}")
+        print(f"[!] Error restarting CLI audio: {e}")
         return False
 
 
 def qr_ascii(url: str, compact: bool = True) -> str:
-    """Gera um QR Code em ASCII art para mostrar no terminal.
+    """Generate QR Code as ASCII art for terminal display.
 
-    Usa blocos unicode ' █' (espaço + bloco) para representar cada módulo.
-    Em terminais modernos isso renderiza como um QR Code escaneável.
+    Uses unicode blocks ' █' (space + block) to represent each module.
+    Modern terminals render this as scannable QR Code.
     """
     if not HAS_QRCODE:
-        return "[QR Code indisponível — instale: pip install qrcode[pil]]"
+        return "[QR Code unavailable — install: pip install qrcode[pil]]"
 
     qr = qrcode.QRCode(
-        version=None,                  # auto
+        version=None,
         error_correction=ERROR_CORRECT_M,
         box_size=1,
         border=2,
@@ -1099,25 +1047,25 @@ def qr_ascii(url: str, compact: bool = True) -> str:
     qr.add_data(url)
     qr.make(fit=True)
 
-    # Renderiza como matriz booleana
+    # Render as boolean matrix
     matrix = qr.get_matrix()
     h = len(matrix)
     w = len(matrix[0]) if h else 0
 
-    # Compacta 2 linhas por linha textual usando half-blocks (▀▄█)
-    # Isso reduz a altura pela metade e fica legível em terminais pequenos
+    # Compact 2 lines per text line using half-blocks (▀▄█)
+    # This halves height and stays readable in small terminals
     lines = []
     for y in range(0, h, 2):
         row = []
         for x in range(w):
             top = matrix[y][x] if y < h else False
             bot = matrix[y + 1][x] if (y + 1) < h else False
-            # Combina bits: top=UPPER, bot=LOWER
-            # Usa caracteres half-block:
-            #   ▀ = só topo preto
-            #   ▄ = só baixo preto
-            #   █ = ambos pretos
-            #   espaço = ambos brancos
+            # Combine bits: top=UPPER, bot=LOWER
+            # Use half-block chars:
+            #   ▀ = only top black
+            #   ▄ = only bottom black
+            #   █ = both black
+            #   space = both white
             if top and bot:
                 row.append("█")
             elif top and not bot:
@@ -1132,9 +1080,9 @@ def qr_ascii(url: str, compact: bool = True) -> str:
 
 
 def qr_png_bytes(url: str, size: int = 512) -> bytes:
-    """Gera um QR Code como PNG (retorna bytes)."""
+    """Generate QR Code as PNG (returns bytes)."""
     if not HAS_QRCODE:
-        raise RuntimeError("qrcode não instalado")
+        raise RuntimeError("qrcode not installed")
 
     img = qrcode.make(url, box_size=10, border=2)
     img = img.resize((size, size), Image.LANCZOS)
@@ -1148,62 +1096,60 @@ def banner(args, pin: str, cert_file: Path | None = None) -> None:
     scheme = "https" if not args.no_https else "http"
     print()
     print("=" * 64)
-    print("  PhoneCam — Celular como Webcam no PC")
+    print("  PhoneCam — Phone as Webcam on PC")
     print("=" * 64)
     print()
     print(f"  OS        : {OS_NAME}")
-    print(f"  Resolução : {args.width}x{args.height} @ {args.fps}fps")
-    print(f"  PIN acesso: {pin}")
-    print(f"  Protocolo : {scheme.upper()}")
+    print(f"  Resolution: {args.width}x{args.height} @ {args.fps}fps")
+    print(f"  PIN       : {pin}")
+    print(f"  Protocol  : {scheme.upper()}")
     if cert_file and not args.no_https:
         print(f"  Cert SSL  : {cert_file}")
-    print(f"  Microfone : {'ATIVADO' if args.audio else 'desativado (--no-audio)'}")
+    print(f"  Microphone: {'ENABLED' if args.audio else 'disabled (--no-audio)'}")
     print()
 
-    # QR Code aponta para a primeira URL com PIN embutido (auto-conexão)
+    # QR Code points to first URL with embedded PIN (auto-connect)
     base_host = ips[0] if ips else "localhost"
     qr_url = f"{scheme}://{base_host}:{args.port}/?pin={pin}"
     if HAS_QRCODE:
-        print("  ┌─ Escaneie o QR Code com a câmera do celular ─┐")
-        print("  │  (o PIN já vem embutido — conecta sozinho)   │")
-        print("  └──────────────────────────────────────────────┘")
+        print("  ┌─ Scan QR Code with phone camera ─┐")
+        print("  │  (PIN already embedded — auto-connect)   │")
+        print("  └────────────────────────────────────────┘")
         print()
         ascii_qr = qr_ascii(qr_url)
-        # Indenta o QR Code para ficar alinhado no banner
+        # Indent QR Code to align in banner
         for line in ascii_qr.split("\n"):
             print("      " + line)
         print()
-        print(f"  URL embutida no QR: {qr_url}")
+        print(f"  URL embedded in QR: {qr_url}")
         print()
     else:
-        print("  1) No celular, conectado na MESMA rede Wi-Fi que o PC,")
-        print(f"     abra uma das URLs abaixo no navegador (Chrome/Safari/Firefox):")
+        print("  1) On phone, connected to SAME Wi-Fi as PC,")
+        print("     open one of the URLs below in browser (Chrome/Safari/Firefox):")
         print()
         for ip in ips:
             print(f"        {scheme}://{ip}:{args.port}/?pin={pin}")
         print()
-        print("  (Instale 'qrcode' para ver QR Code: pip install qrcode[pil])")
+        print("  (Install 'qrcode' for QR Code: pip install qrcode[pil])")
         print()
 
     if not args.no_https:
-        print("  ⚠  AVISO DE CERTIFICADO: o navegador vai mostrar 'Conexão não")
-        print("     segura'. É NORMAL — aceite para continuar:")
-        print("       Chrome Android: 'Avançado' → 'Continuar para <ip> (não seguro)'")
-        print("       Safari iOS:     'Mostrar detalhes' → 'Visitar este site'")
+        print("  ⚠  CERTIFICATE WARNING: browser will show 'Connection not")
+        print("     secure'. This is NORMAL — accept to continue:")
+        print("       Chrome Android: 'Advanced' → 'Proceed to <ip> (unsafe)'")
+        print("       Safari iOS:     'Show Details' → 'Visit this Website'")
         print()
-    print(f"  2) Digite o PIN: {pin}  (ou escaneie o QR acima p/ pular esta etapa)")
+    print(f"  2) Enter PIN: {pin}  (or scan QR above to skip this step)")
     print()
-    print("  3) A webcam virtual aparecerá em /dev/video10 (ou outro /dev/videoN).")
-    print("     Selecione \"PhoneCam\" em Discord, OBS, Zoom, etc.")
+    print("  3) Virtual webcam will appear at /dev/video10 (or other /dev/videoN).")
+    print("     Select \"PhoneCam\" in Discord, OBS, Zoom, etc.")
     print()
     print("-" * 64)
-    print("Logs (Ctrl+C para encerrar):")
+    print("Logs (Ctrl+C to stop):")
     print()
 
 
-# --------------------------------------------------------------------------- #
-# Rotas
-# --------------------------------------------------------------------------- #
+# Routes
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
@@ -1225,10 +1171,10 @@ async def info():
 
 @app.get("/qrcode.png")
 async def qrcode_png():
-    """Imagem PNG do QR Code apontando para a URL principal do PhoneCam (com PIN embutido)."""
+    """PNG QR Code pointing to main PhoneCam URL (with embedded PIN)."""
     from fastapi import Response
     if not HAS_QRCODE:
-        return JSONResponse({"error": "qrcode não instalado"}, status_code=503)
+        return JSONResponse({"error": "qrcode not installed"}, status_code=503)
     cfg = app.state.cfg
     ips = get_local_ips()
     scheme = "https" if not cfg.no_https else "http"
@@ -1244,10 +1190,10 @@ async def qrcode_png():
 
 @app.get("/qrcode")
 async def qrcode_ascii_endpoint():
-    """QR Code em ASCII art (para inspecionar via curl). Inclui PIN na URL."""
+    """QR Code as ASCII art (for curl inspection). Includes PIN in URL."""
     from fastapi import Response
     if not HAS_QRCODE:
-        return JSONResponse({"error": "qrcode não instalado"}, status_code=503)
+        return JSONResponse({"error": "qrcode not installed"}, status_code=503)
     cfg = app.state.cfg
     ips = get_local_ips()
     scheme = "https" if not cfg.no_https else "http"
@@ -1262,19 +1208,19 @@ async def qrcode_ascii_endpoint():
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, pin: str = Query(...)):
-    """Recebe frames JPEG binários do celular e escreve na webcam virtual."""
+    """Receive binary JPEG frames from phone and write to virtual webcam."""
     cfg = app.state.cfg
 
-    # Valida PIN antes de aceitar
+    # Validate PIN before accepting
     if pin != app.state.pin:
-        await ws.close(code=4003, reason="PIN inválido")
+        await ws.close(code=4003, reason="Invalid PIN")
         return
 
-    # Apenas um cliente ativo por vez
+    # Only one active client at a time
     async with state.client_lock:
         if state.client is not None and state.client is not ws:
             try:
-                await state.client.close(code=4009, reason="Outro cliente conectado")
+                await state.client.close(code=4009, reason="Another client connected")
             except Exception:
                 pass
         state.client = ws
@@ -1282,9 +1228,9 @@ async def ws_endpoint(ws: WebSocket, pin: str = Query(...)):
         state.connected_since = time.time()
 
     await ws.accept()
-    print(f"[+] Cliente conectado: {state.client_addr}")
+    print(f"[+] Client connected: {state.client_addr}")
 
-    # Timeout de inatividade: se nenhum frame chegar em 15s, considera conexão morta
+    # Inactivity timeout: if no frame arrives in 15s, consider connection dead
     INACTIVITY_TIMEOUT = 15.0
 
     try:
@@ -1292,34 +1238,34 @@ async def ws_endpoint(ws: WebSocket, pin: str = Query(...)):
             try:
                 msg = await asyncio.wait_for(ws.receive_bytes(), timeout=INACTIVITY_TIMEOUT)
             except asyncio.TimeoutError:
-                # Sem frames por 15s — pode ser tela apagada ou conexão presa
-                print(f"\n[!] Sem frames por {INACTIVITY_TIMEOUT:.0f}s — fechando conexão")
+                # No frames for 15s — could be screen off or stuck connection
+                print(f"\n[!] No frames for {INACTIVITY_TIMEOUT:.0f}s — closing connection")
                 break
 
             try:
                 img = Image.open(io.BytesIO(msg)).convert("RGB")
             except Exception as e:
-                print(f"[!] Frame inválido ({e}), descartado")
+                print(f"[!] Invalid frame ({e}), discarded")
                 continue
 
-            # Redimensiona se necessário
+            # Resize if needed
             if img.size != (cfg.width, cfg.height):
                 img = img.resize((cfg.width, cfg.height), Image.LANCZOS)
 
-            # Monta o array numpy no formato esperado pela câmera virtual
-            # Detectado durante init_virtual_cam (RGB ou BGR conforme backend)
+            # Build numpy array in format expected by virtual camera
+            # Detected during init_virtual_cam (RGB or BGR depending on backend)
             arr = np.asarray(img)
             if state.native_fmt == "BGR":
                 arr = arr[:, :, ::-1]  # RGB -> BGR
-            # se RGB, mantém como está
+            # if RGB, keep as-is
 
             if state.cam is not None:
                 try:
                     state.cam.send(arr)
                 except Exception as e:
-                    print(f"[!] Erro ao enviar frame para v4l2: {e}")
+                    print(f"[!] Error sending frame to v4l2: {e}")
 
-            # Estatísticas de FPS
+            # FPS stats
             state.frames_received += 1
             state.fps_counter += 1
             now = time.time()
@@ -1330,36 +1276,36 @@ async def ws_endpoint(ws: WebSocket, pin: str = Query(...)):
                 print(
                     f"\r[+] FPS: {state.current_fps:5.1f} | "
                     f"Total frames: {state.frames_received} | "
-                    f"Cliente: {state.client_addr}    ",
+                    f"Client: {state.client_addr}    ",
                     end="",
                     flush=True,
                 )
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        print(f"\n[!] Erro no WebSocket: {e}")
+        print(f"\n[!] WebSocket error: {e}")
     finally:
         async with state.client_lock:
             if state.client is ws:
                 state.client = None
                 state.client_addr = ""
-        print(f"\n[-] Cliente desconectado: {ws.client}")
+        print(f"\n[-] Client disconnected: {ws.client}")
 
 
 @app.get("/audio-test")
 async def audio_test():
-    """Grava 3 segundos de áudio do mic virtual (monitor) e retorna como WAV.
+    """Record 3 seconds from virtual mic (monitor) and return as WAV.
 
-    Útil para testar se o áudio do celular está realmente chegando no sink.
-    Acesse https://<ip>:<port>/audio-test no navegador do PC para baixar o WAV.
+    Useful to test if phone audio is actually reaching the sink.
+    Open https://<ip>:<port>/audio-test in PC browser to download WAV.
     """
-    import tempfile
     import shutil
+    import tempfile
+
     from fastapi import Response
 
-    sink_name = "phonecam_mic_sink"
-    # Grava do virtual source "phonecam_mic" (não do monitor do sink)
-    # porque é isso que o Discord vê como dispositivo de entrada
+    # Record from virtual source "phonecam_mic" (not monitor of sink)
+    # because that's what Discord sees as input device
     monitor_name = "phonecam_mic"
     duration_s = 3
 
@@ -1371,83 +1317,62 @@ async def audio_test():
 
     if not (pw_record or parec):
         return JSONResponse(
-            {"error": "nem pw-record nem parec disponíveis"},
-            status_code=500,
+            {"error": "No pw-record or parec found. Install pipewire or pulseaudio-utils."},
+            status_code=503,
         )
 
     if pw_record:
-        cmd = [pw_record, "--format", "s16", "--rate", str(AUDIO_SAMPLE_RATE),
-               "--channels", str(AUDIO_CHANNELS), "-d", monitor_name, tmp_wav.name]
+        cmd = ["pw-record", "--format=s16le", f"--rate={AUDIO_SAMPLE_RATE}",
+               f"--channels={AUDIO_CHANNELS}", f"-d={monitor_name}",
+               "--file-format=wav", f"--file={tmp_wav.name}"]
     else:
-        # parec com --file-format=wav
         cmd = ["parec", "--format=s16le", f"--rate={AUDIO_SAMPLE_RATE}",
                f"--channels={AUDIO_CHANNELS}", f"-d={monitor_name}",
-               f"--file-format=wav", f"--file={tmp_wav.name}"]
+               "--file-format=wav", f"--file={tmp_wav.name}"]
 
-    # Roda por 3s e mata o processo
-    import subprocess as sp
+    # Run for 3s and kill process
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    import time as _t
+    _t.sleep(duration_s)
+    proc.terminate()
     try:
-        proc = sp.Popen(cmd, stdout=sp.DEVNULL, stderr=sp.PIPE)
-        try:
-            proc.wait(timeout=duration_s)
-        except sp.TimeoutExpired:
-            # Esperado — o processo grava indefinidamente, matamos após 3s
-            proc.terminate()
-            try:
-                proc.wait(timeout=2)
-            except sp.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
-        if proc.returncode and proc.returncode > 0:
-            err = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
-            return JSONResponse(
-                {"error": f"gravação falhou (exit {proc.returncode}): {err}"},
-                status_code=500,
-            )
-
-        if not os.path.exists(tmp_wav.name) or os.path.getsize(tmp_wav.name) == 0:
-            return JSONResponse(
-                {"error": "arquivo WAV vazio — sink/monitor não encontrado ou sem áudio"},
-                status_code=500,
-            )
-
-        wav_data = open(tmp_wav.name, "rb").read()
+    if os.path.exists(tmp_wav.name):
+        with open(tmp_wav.name, "rb") as f:
+            wav_data = f.read()
+        os.unlink(tmp_wav.name)
         return Response(
             content=wav_data,
             media_type="audio/wav",
-            headers={
-                "Content-Disposition": "attachment; filename=phonecam-audio-test.wav",
-                "Cache-Control": "no-store",
-            },
+            headers={"Content-Disposition": "attachment; filename=phonecam_audio_test.wav"},
         )
-    finally:
-        try:
-            os.unlink(tmp_wav.name)
-        except Exception:
-            pass
+    else:
+        return JSONResponse({"error": "Recording failed"}, status_code=500)
 
 
 @app.websocket("/ws/audio")
 async def ws_audio_endpoint(ws: WebSocket, pin: str = Query(...)):
-    """Recebe áudio PCM 16-bit mono do celular e toca no microfone virtual.
+    """Receive PCM 16-bit mono audio from phone and play to virtual mic.
 
-    Formato: chunks binários de PCM 16-bit signed little-endian, mono, 48kHz.
-    Latência alvo: ~20ms por chunk.
+    Format: binary chunks of PCM 16-bit signed little-endian, mono, 48kHz.
+    Target latency: ~20ms per chunk.
     """
     if pin != app.state.pin:
-        await ws.close(code=4003, reason="PIN inválido")
+        await ws.close(code=4003, reason="Invalid PIN")
         return
 
     if not state.audio_enabled or state.audio_out is None:
-        await ws.close(code=4004, reason="Áudio desativado no servidor (use --audio)")
+        await ws.close(code=4004, reason="Audio disabled on server (use --audio)")
         return
 
     await ws.accept()
-    print(f"[+] Cliente de áudio conectado: {ws.client.host if ws.client else '?'}")
+    print(f"[+] Audio client connected: {ws.client.host if ws.client else '?'}")
 
-    # Estatísticas de volume para diagnóstico
-    import struct
+    # Volume stats for diagnostics
     last_stats_time = time.time()
     stats_packets = 0
     max_sample_seen = 0
@@ -1457,118 +1382,72 @@ async def ws_audio_endpoint(ws: WebSocket, pin: str = Query(...)):
             try:
                 msg = await asyncio.wait_for(ws.receive_bytes(), timeout=60.0)
             except asyncio.TimeoutError:
+                # No audio for 60s — consider connection dead
                 break
 
+            if not state.audio_enabled:
+                continue
+
+            # Convert Float32 -> Int16 PCM little-endian
+            # (handled on phone side, we just forward binary)
             ok = write_audio_chunk(msg)
             if not ok:
-                print(f"\n[!] Erro ao escrever áudio no sink — fechando conexão")
                 break
+
             state.audio_packets += 1
             stats_packets += 1
-
-            # A cada 2s, mede volume RMS do último chunk para diagnóstico
             now = time.time()
-            if now - last_stats_time >= 2.0 and len(msg) >= 2:
-                try:
-                    # Calcula pico absoluto dos samples Int16
-                    n = len(msg) // 2
-                    samples = struct.unpack(f"<{n}h", msg[:n*2])
-                    if samples:
-                        peak = max(abs(s) for s in samples)
-                        max_sample_seen = max(max_sample_seen, peak)
-                        # Converte para dBFS (0 dBFS = 32767)
-                        dbfs = (20 * math.log10(peak / 32767)) if peak > 0 else -96.0
-                        print(
-                            f"\r[áudio] pacotes: {state.audio_packets} | "
-                            f"pico atual: {dbfs:6.1f} dBFS | "
-                            f"pico máx: {max_sample_seen:5d}/32767    ",
-                            end="", flush=True,
-                        )
-                except Exception:
-                    pass
-                last_stats_time = now
+            if now - last_stats_time >= 5.0:
+                print(f"    [audio] packets: {stats_packets} | max sample: {max_sample_seen}")
                 stats_packets = 0
+                max_sample_seen = 0
+                last_stats_time = now
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        print(f"\n[!] Erro no WS de áudio: {e}")
+        print(f"\n[!] Audio WebSocket error: {e}")
     finally:
-        print(f"\n[-] Cliente de áudio desconectado ({state.audio_packets} pacotes totais)")
+        print(f"\n[-] Audio client disconnected: {ws.client}")
 
 
-# --------------------------------------------------------------------------- #
-# Entry point
-# --------------------------------------------------------------------------- #
+# Main entry point
 def main():
-    parser = argparse.ArgumentParser(
-        description="PhoneCam — celular como webcam + microfone virtual (Windows/macOS/Linux).",
-    )
-    parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8765, help="Porta TCP (default: 8765)")
-    parser.add_argument("--width", type=int, default=1280, help="Largura (default: 1280)")
-    parser.add_argument("--height", type=int, default=720, help="Altura (default: 720)")
-    parser.add_argument("--fps", type=int, default=30, help="FPS alvo (default: 30)")
-    parser.add_argument("--pin", default=None, help="PIN fixo (default: aleatório a cada execução)")
-    parser.add_argument(
-        "--no-https",
-        action="store_true",
-        help="Desativa HTTPS (uso só em localhost; navegadores bloqueiam getUserMedia em HTTP remoto)",
-    )
-    parser.add_argument(
-        "--audio",
-        action="store_true",
-        default=True,
-        help="Ativa microfone do celular (padrão: LIGADO). Use --no-audio para desativar.",
-    )
-    parser.add_argument(
-        "--no-audio",
-        action="store_true",
-        help="Desativa microfone do celular (mantém só vídeo)",
-    )
+    parser = argparse.ArgumentParser(description="PhoneCam — Phone as Webcam on PC")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8765, help="TCP port (default: 8765)")
+    parser.add_argument("--width", type=int, default=1280, help="Width (default: 1280)")
+    parser.add_argument("--height", type=int, default=720, help="Height (default: 720)")
+    parser.add_argument("--fps", type=int, default=30, help="Target FPS (default: 30)")
+    parser.add_argument("--pin", type=str, default=None, help="Fixed PIN (default: random each run)")
+    parser.add_argument("--no-https", action="store_true", help="Disable HTTPS (ONLY for localhost; phones require HTTPS)")
+    parser.add_argument("--no-audio", action="store_true", help="Disable phone microphone (audio is ON by default)")
     args = parser.parse_args()
 
-    # --no-audio sobrescreve --audio (que agora é default True)
-    if args.no_audio:
-        args.audio = False
+    # Generate random PIN if not provided
+    pin = args.pin or f"{secrets.randbelow(900000) + 100000:06d}"
 
-    pin = args.pin if args.pin else f"{secrets.randbelow(1_000_000):06d}"
+    # SSL cert
+    cert_file = None
+    if not args.no_https:
+        cert_file, _ = ensure_ssl_cert(BASE_DIR / "certs")
+
+    # Store config and PIN in app state
     app.state.cfg = args
     app.state.pin = pin
 
-    # Gera certificado SSL auto-assinado (necessário para getUserMedia no celular)
-    cert_file = None
-    key_file = None
-    if not args.no_https:
-        try:
-            cert_file, key_file = ensure_ssl_cert(BASE_DIR / "certs")
-        except Exception as e:
-            print(f"[AVISO] Não foi possível gerar cert SSL ({e}); iniciando em HTTP.")
-            print("        getUserMedia pode falhar no celular. Use --no-https só em localhost.")
-            args.no_https = True
-
+    # Print banner
     banner(args, pin, cert_file)
 
-    try:
-        if args.no_https:
-            uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
-        else:
-            uvicorn.run(
-                app,
-                host=args.host,
-                port=args.port,
-                log_level="warning",
-                ssl_certfile=str(cert_file),
-                ssl_keyfile=str(key_file),
-            )
-    except KeyboardInterrupt:
-        print("\n\n[+] Encerrando PhoneCam...")
-    finally:
-        if state.cam:
-            try:
-                state.cam.close()
-            except Exception:
-                pass
-        teardown_audio()
+    # Run server
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        ssl_certfile=cert_file if not args.no_https else None,
+        ssl_keyfile=cert_file if not args.no_https else None,
+        log_level="warning",
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":

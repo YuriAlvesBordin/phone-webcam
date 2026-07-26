@@ -1,22 +1,7 @@
 #!/usr/bin/env python3
-"""
-PhoneCam — Desinstalador multiplataforma.
-
-Remove:
-  - Linux: configurações de boot do v4l2loopback + módulo + null sink do PulseAudio
-  - macOS/Windows: apenas mostra instruções (não há nada a remover automaticamente)
-
-NÃO remove:
-  - venv/ (deps Python) — rode: python -c "import shutil; shutil.rmtree('venv')"
-  - certs/ (certificados SSL) — rode: python -c "import shutil; shutil.rmtree('certs')"
-  - OBS Studio / VB-Cable / BlackHole (desinstale manualmente)
-
-Uso: python uninstall.py
-"""
 
 import platform
 import subprocess
-import sys
 from pathlib import Path
 
 IS_LINUX = platform.system() == "Linux"
@@ -29,17 +14,16 @@ def run(cmd, check=False):
 
 
 def uninstall_linux():
-    print(">>> Removendo configurações de boot do v4l2loopback…")
+    print(">>> Removing v4l2loopback boot configs...")
     run(["sudo", "rm", "-f", "/etc/modprobe.d/phonecam.conf",
          "/etc/modules-load.d/phonecam.conf"], check=False)
 
-    print(">>> Descarregando módulo v4l2loopback…")
+    print(">>> Unloading v4l2loopback module...")
     r = run(["sudo", "modprobe", "-r", "v4l2loopback"])
     if r.returncode != 0:
-        print("    (módulo em uso — reinicie o PC para concluir)")
+        print("    (module in use — reboot to complete)")
 
-    print(">>> Descarregando null sink 'phonecam_mic' do PulseAudio…")
-    # Lista módulos e descarrega o null sink do phonecam
+    print(">>> Unloading 'phonecam_mic' null sink from PulseAudio...")
     r = run(["pactl", "list", "short", "modules"])
     if r.returncode == 0:
         for line in r.stdout.split("\n"):
@@ -49,35 +33,34 @@ def uninstall_linux():
 
 
 def uninstall_other():
-    print(f">>> Em {platform.system()}, não há configurações de sistema para remover.")
-    print("    Apenas remova a pasta do PhoneCam.")
-    print("    Softwares opcionais a desinstalar manualmente:")
-    print("      - OBS Studio (se instalado só para o PhoneCam)")
-    print("      - VB-Cable (Windows) ou BlackHole (macOS) — se instalou para microfone")
+    print(f">>> On {platform.system()}, no system configs to remove.")
+    print("    Just remove the PhoneCam folder.")
+    print("    Optional software to uninstall manually:")
+    print("      - OBS Studio (if installed only for PhoneCam)")
+    print("      - VB-Cable (Windows) or BlackHole (macOS) — if installed for microphone")
 
 
 def cleanup_local():
-    """Remove venv e certs locais (opcional, pergunta antes)."""
     print()
     venv = PROJECT_DIR / "venv"
     certs = PROJECT_DIR / "certs"
     if venv.exists():
-        ans = input(f"Remover {venv}? [y/N] ").strip().lower()
+        ans = input(f"Remove {venv}? [y/N] ").strip().lower()
         if ans == "y":
             import shutil
             shutil.rmtree(venv)
-            print(f"    [OK] {venv} removido")
+            print(f"    [OK] {venv} removed")
     if certs.exists():
-        ans = input(f"Remover {certs}? [y/N] ").strip().lower()
+        ans = input(f"Remove {certs}? [y/N] ").strip().lower()
         if ans == "y":
             import shutil
             shutil.rmtree(certs)
-            print(f"    [OK] {certs} removido")
+            print(f"    [OK] {certs} removed")
 
 
 def main():
     print("=" * 64)
-    print("  PhoneCam — Desinstalador")
+    print("  PhoneCam — Uninstaller")
     print("=" * 64)
     print()
     if IS_LINUX:
@@ -85,7 +68,7 @@ def main():
     else:
         uninstall_other()
     print()
-    print("[OK] PhoneCam desinstalado do sistema.")
+    print("[OK] PhoneCam uninstalled from system.")
     cleanup_local()
 
 

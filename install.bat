@@ -1,7 +1,7 @@
 @echo off
-REM PhoneCam - Instalador para Windows
+REM PhoneCam - Installer for Windows
 REM
-REM Roda install.py que detecta tudo automaticamente.
+REM Runs install.py which detects everything automatically.
 
 setlocal
 cd /d "%~dp0"
@@ -9,7 +9,7 @@ cd /d "%~dp0"
 where python >nul 2>&1 && set "PY=python" || (
   where python3 >nul 2>&1 && set "PY=python3" || (
     where py >nul 2>&1 && set "PY=py -3" || (
-      echo [ERRO] Python 3 nao encontrado. Instale de https://python.org
+      echo [ERROR] Python 3 not found. Install from https://python.org
       exit /b 1
     )
   )
