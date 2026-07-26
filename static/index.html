@@ -1,0 +1,1419 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>PhoneCam</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --bg-elev: #1e293b;
+    --bg-elev-2: #334155;
+    --fg: #f1f5f9;
+    --fg-muted: #94a3b8;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --danger: #ef4444;
+    --danger-hover: #dc2626;
+    --success: #22c55e;
+    --border: #475569;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ---------- Tela PIN ---------- */
+  .pin-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 100;
+  }
+  .pin-card {
+    background: var(--bg-elev);
+    padding: 32px 24px;
+    border-radius: var(--radius);
+    max-width: 360px;
+    width: 100%;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+    border: 1px solid var(--border);
+  }
+  .pin-logo {
+    width: 56px; height: 56px;
+    margin: 0 auto 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+  }
+  .pin-card h2 { text-align: center; font-size: 22px; margin-bottom: 6px; }
+  .pin-card .sub {
+    text-align: center; color: var(--fg-muted);
+    font-size: 13px; line-height: 1.5;
+    margin-bottom: 24px;
+  }
+  .pin-input-wrap {
+    display: flex; justify-content: center; margin-bottom: 16px;
+  }
+  .pin-input {
+    width: 100%;
+    padding: 16px 12px;
+    font-size: 28px;
+    text-align: center;
+    letter-spacing: 10px;
+    border: 2px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 10px;
+    outline: none;
+    font-family: "SF Mono", Menlo, monospace;
+    transition: border-color 0.15s;
+  }
+  .pin-input:focus { border-color: var(--accent); }
+  .btn-primary {
+    width: 100%;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-primary:disabled { background: var(--bg-elev-2); cursor: not-allowed; }
+  .pin-error {
+    color: var(--danger);
+    text-align: center;
+    margin-top: 12px;
+    font-size: 13px;
+    min-height: 18px;
+  }
+
+  /* ---------- Tela principal ---------- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--bg-elev);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .topbar .brand { font-weight: 700; font-size: 16px; }
+  .topbar .brand .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .topbar .brand .dot.live { background: var(--success); animation: pulse 1.5s infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .topbar .fps { font-family: monospace; font-size: 14px; color: var(--fg-muted); }
+
+  .stage {
+    flex: 1;
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .stage video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    touch-action: none;  /* permite pinch/drag custom no video */
+  }
+  .stage .placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: var(--fg-muted);
+    font-size: 14px;
+    gap: 12px;
+    padding: 24px;
+    text-align: center;
+  }
+  .stage .placeholder .icon { font-size: 48px; opacity: 0.5; }
+
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 12px;
+    background: var(--bg-elev);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .btn {
+    padding: 14px 12px;
+    font-size: 15px;
+    font-weight: 500;
+    border: none;
+    border-radius: 10px;
+    background: var(--bg-elev-2);
+    color: var(--fg);
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  /* Zoom panel (linha 3) */
+  .zoom-panel {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 44px 1fr 44px 60px;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 4px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+  }
+  .zoom-btn {
+    width: 44px; height: 44px;
+    border: none;
+    border-radius: 50%;
+    background: var(--bg-elev-2);
+    color: var(--fg);
+    font-size: 22px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  .zoom-btn:hover { background: #475569; }
+  .zoom-btn:active { transform: scale(0.92); }
+  .zoom-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .zoom-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-elev-2);
+    outline: none;
+    cursor: pointer;
+  }
+  .zoom-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+    cursor: pointer;
+  }
+  .zoom-slider::-moz-range-thumb {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+    cursor: pointer;
+  }
+  .zoom-label {
+    text-align: center;
+    font-family: monospace;
+    font-size: 14px;
+    color: var(--fg-muted);
+    user-select: none;
+  }
+  .zoom-reset {
+    width: 100%;
+    padding: 8px 4px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .zoom-reset:hover { color: var(--fg); }
+
+  /* Indicador de orientação */
+  .orient-hint {
+    position: absolute;
+    top: 12px; left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 14px;
+    background: rgba(0,0,0,0.65);
+    border-radius: 16px;
+    color: #fbbf24;
+    font-size: 12px;
+    z-index: 5;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .orient-hint.show { opacity: 1; }
+
+  /* Indicador de zoom overlay no vídeo */
+  .zoom-indicator {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    padding: 6px 12px;
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    font-family: monospace;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 12px;
+    z-index: 6;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .zoom-indicator.show { opacity: 1; }
+  .zoom-indicator.changed {
+    background: rgba(59, 130, 246, 0.9);
+    transform: scale(1.1);
+  }
+
+  /* Indicador de wake lock perdido */
+  .wake-hint {
+    position: fixed;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    background: rgba(234, 179, 8, 0.95);
+    color: #1e293b;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 16px;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    cursor: pointer;
+    transition: opacity 0.3s, transform 0.3s;
+  }
+  .wake-hint.hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(-10px);
+  }
+
+  /* Painel de microfone */
+  .audio-panel {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 4px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+  }
+  .audio-btn {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    background: var(--bg-elev-2);
+    font-size: 14px;
+    border-radius: 8px;
+  }
+  .audio-btn.on {
+    background: var(--success);
+    color: #0f172a;
+  }
+  .audio-btn:hover { background: #475569; }
+  .audio-btn.on:hover { background: #16a34a; }
+  .audio-status {
+    font-size: 12px;
+    color: var(--fg-muted);
+    flex: 1;
+    text-align: right;
+  }
+  .audio-status.active { color: var(--success); }
+  .audio-status.error { color: var(--danger); }
+
+  /* Botões quick de zoom (1×, 2×, 3×, 4×) */
+  .zoom-quick {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 4px 0 0;
+  }
+  .zoom-quick-btn {
+    padding: 12px 8px;
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .zoom-quick-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--bg-elev-2);
+  }
+  .zoom-quick-btn:active:not(:disabled) { transform: scale(0.95); }
+  .zoom-quick-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .zoom-quick-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn:hover { background: #475569; }
+  .btn:active { transform: scale(0.98); }
+  .btn.danger { background: var(--danger); }
+  .btn.danger:hover { background: var(--danger-hover); }
+  .btn.accent { background: var(--accent); }
+  .btn.accent:hover { background: var(--accent-hover); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .status-bar {
+    padding: 8px 16px;
+    background: var(--bg);
+    color: var(--fg-muted);
+    font-size: 12px;
+    text-align: center;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+  }
+  .status-bar.connected { color: var(--success); }
+  .status-bar.error { color: var(--danger); }
+
+  .hidden { display: none !important; }
+
+  /* Suporte a notch */
+  @supports (padding: max(0px)) {
+    .topbar { padding-top: max(12px, env(safe-area-inset-top)); }
+    .controls { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Tela de PIN -->
+<div class="pin-overlay" id="pinOverlay">
+  <div class="pin-card">
+    <div class="pin-logo">📱</div>
+    <h2>PhoneCam</h2>
+    <p class="sub">Digite o PIN de 6 dígitos exibido no terminal do PC para conectar a câmera.</p>
+    <div class="pin-input-wrap">
+      <input
+        type="tel"
+        id="pinInput"
+        class="pin-input"
+        inputmode="numeric"
+        maxlength="6"
+        placeholder="••••••"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      >
+    </div>
+    <button class="btn-primary" id="connectBtn" onclick="connect()">Conectar</button>
+    <p class="pin-error" id="pinError"></p>
+  </div>
+</div>
+
+<!-- Tela principal -->
+<div class="topbar hidden" id="topbar">
+  <div class="brand"><span class="dot" id="liveDot"></span>PhoneCam</div>
+  <div class="fps" id="fps">— fps</div>
+</div>
+<div class="wake-hint hidden" id="wakeHint">
+  💡 Tela livre para apagar — toque para reativar
+</div>
+
+<div class="stage hidden" id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <div class="placeholder" id="placeholder">
+    <div class="icon">📷</div>
+    <div>Aguardando câmera…</div>
+  </div>
+  <div class="orient-hint" id="orientHint">📱 Gire para a horizontal — qualidade melhora</div>
+  <div class="zoom-indicator hidden" id="zoomIndicator">1.0×</div>
+</div>
+
+<div class="controls hidden" id="controls">
+  <button class="btn" id="flipBtn" disabled>🔄 Trocar câmera</button>
+  <button class="btn danger" id="toggleBtn" disabled>⏸ Pausar</button>
+
+  <div class="zoom-panel">
+    <button class="zoom-btn" id="zoomOutBtn" disabled>−</button>
+    <input type="range" class="zoom-slider" id="zoomSlider"
+           min="1" max="4" step="0.1" value="1" disabled>
+    <button class="zoom-btn" id="zoomInBtn" disabled>+</button>
+    <button class="zoom-reset" id="zoomResetBtn" disabled>1.0×</button>
+  </div>
+
+  <div class="zoom-quick">
+    <button class="zoom-quick-btn" data-zoom="1" disabled>1×</button>
+    <button class="zoom-quick-btn" data-zoom="2" disabled>2×</button>
+    <button class="zoom-quick-btn" data-zoom="3" disabled>3×</button>
+    <button class="zoom-quick-btn" data-zoom="4" disabled>4×</button>
+  </div>
+
+  <div class="audio-panel" id="audioPanel">
+    <button class="btn audio-btn" id="micToggleBtn" disabled>🎤 Microfone OFF</button>
+    <span class="audio-status" id="audioStatus">Áudio desativado</span>
+  </div>
+</div>
+
+<div class="status-bar hidden" id="statusBar">Conectando…</div>
+
+<script>
+"use strict";
+
+// --------- Elementos DOM ---------
+const pinOverlay   = document.getElementById("pinOverlay");
+const pinInput     = document.getElementById("pinInput");
+const pinError     = document.getElementById("pinError");
+const connectBtn   = document.getElementById("connectBtn");
+const topbar       = document.getElementById("topbar");
+const stage        = document.getElementById("stage");
+const video        = document.getElementById("video");
+const placeholder  = document.getElementById("placeholder");
+const controls     = document.getElementById("controls");
+const flipBtn      = document.getElementById("flipBtn");
+const toggleBtn    = document.getElementById("toggleBtn");
+const statusBar    = document.getElementById("statusBar");
+const liveDot      = document.getElementById("liveDot");
+const fpsEl        = document.getElementById("fps");
+const orientHint   = document.getElementById("orientHint");
+const zoomSlider   = document.getElementById("zoomSlider");
+const zoomOutBtn   = document.getElementById("zoomOutBtn");
+const zoomInBtn    = document.getElementById("zoomInBtn");
+const zoomResetBtn = document.getElementById("zoomResetBtn");
+const wakeHint     = document.getElementById("wakeHint");
+const micToggleBtn = document.getElementById("micToggleBtn");
+const audioStatus  = document.getElementById("audioStatus");
+const zoomIndicator = document.getElementById("zoomIndicator");
+
+// --------- Estado ---------
+const WIDTH = 1280;
+const HEIGHT = 720;
+const TARGET_FPS = 30;
+const FRAME_INTERVAL_MS = 1000 / TARGET_FPS;
+const JPEG_QUALITY = 0.72;
+const ZOOM_MIN = 1.0;
+const ZOOM_MAX = 4.0;
+const ZOOM_STEP = 0.25;
+
+let stream = null;
+let ws = null;
+let canvas = null;
+let ctx = null;
+let sending = false;
+let paused = false;
+let currentFacing = "environment";
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let lastSentTime = 0;
+let rafId = null;
+
+// Zoom & Pan
+let currentZoom = 1.0;       // 1.0 = sem zoom, até 4.0
+let panX = 0;                // -1 a 1 (offset horizontal da janela de crop)
+let panY = 0;                // -1 a 1 (offset vertical)
+let pinchStartDist = 0;
+let pinchStartZoom = 1.0;
+let dragStartX = 0, dragStartY = 0;
+let dragStartPanX = 0, dragStartPanY = 0;
+let isDragging = false;
+
+// Wake Lock (manter tela acesa)
+let wakeLock = null;
+let wakeLockRequested = false;  // usuário autorizou
+
+// Reconexão automática
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+let isReconnecting = false;
+const RECONNECT_DELAYS = [1000, 2000, 2000, 5000, 5000, 10000, 10000, 15000];
+let userClosedConnection = false;  // distingue disconnect intencional de falha
+
+// Áudio (microfone do celular)
+let audioContext = null;        // AudioContext
+let micStream = null;           // MediaStream do microfone
+let audioWs = null;             // WebSocket separado para áudio
+let audioProcessor = null;      // ScriptProcessorNode (ou AudioWorklet)
+let audioEnabled = false;       // servidor reportou ter áudio
+let micActive = false;          // usuário ativou o mic
+let micMuted = false;           // mutado pelo botão
+let audioSampleRate = 48000;    // vindo do servidor
+let audioChannels = 1;
+
+// --------- Conexão ---------
+async function connect() {
+  // Verifica se a API de câmera está disponível (exige HTTPS ou localhost)
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const isHttp = location.protocol === "http:";
+    const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    if (isHttp && !isLocalhost) {
+      pinError.innerHTML =
+        "Navegador bloqueou a câmera via HTTP. Use HTTPS: troque a URL para " +
+        "<b>https://" + location.host + "/</b> e aceite o certificado.";
+    } else {
+      pinError.textContent =
+        "Este navegador não suporta getUserMedia. Tente Chrome, Safari ou Firefox atualizado.";
+    }
+    return;
+  }
+
+  const pin = pinInput.value.trim();
+  if (pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+    pinError.textContent = "PIN deve ter 6 dígitos numéricos.";
+    return;
+  }
+  pinError.textContent = "";
+  connectBtn.disabled = true;
+  connectBtn.textContent = "Conectando…";
+  userClosedConnection = false;
+  wakeLockRequested = true;  // usuário autorizou wake lock ao conectar
+
+  // Solicita wake lock (mantém tela acesa) imediatamente
+  await acquireWakeLock();
+
+  await openWebSocket(pin);
+}
+
+async function openWebSocket(pin) {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${proto}//${location.host}/ws?pin=${encodeURIComponent(pin)}`;
+
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (e) {
+    pinError.textContent = "Não foi possível criar WebSocket.";
+    onConnectionLost("Erro interno ao criar WebSocket");
+    return;
+  }
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = async () => {
+    reconnectAttempts = 0;
+    isReconnecting = false;
+    pinOverlay.classList.add("hidden");
+    topbar.classList.remove("hidden");
+    stage.classList.remove("hidden");
+    controls.classList.remove("hidden");
+    statusBar.classList.remove("hidden");
+    setStatus("Conectado — solicitando câmera…", "connected");
+
+    // Verifica se o servidor tem áudio habilitado
+    try {
+      const r = await fetch("/info");
+      const info = await r.json();
+      audioEnabled = !!info.audio_enabled;
+      audioSampleRate = info.audio_sample_rate || 48000;
+      audioChannels = info.audio_channels || 1;
+      if (audioEnabled) {
+        micToggleBtn.disabled = false;
+        audioStatus.textContent = "Pronto p/ ativar";
+        audioStatus.className = "audio-status";
+      } else {
+        micToggleBtn.disabled = true;
+        audioStatus.textContent = "Servidor sem --audio";
+        audioStatus.className = "audio-status";
+      }
+    } catch (e) {
+      micToggleBtn.disabled = true;
+      audioStatus.textContent = "Sem info de áudio";
+      audioStatus.className = "audio-status";
+    }
+
+    try {
+      await startCamera();
+      sending = true;
+      paused = false;
+      flipBtn.disabled = false;
+      toggleBtn.disabled = false;
+      toggleBtn.textContent = "⏸ Pausar";
+      // Habilita controles de zoom
+      zoomSlider.disabled = false;
+      zoomOutBtn.disabled = false;
+      zoomInBtn.disabled = false;
+      zoomResetBtn.disabled = false;
+      document.querySelectorAll(".zoom-quick-btn").forEach(b => b.disabled = false);
+      loop();
+      // Re-adquire wake lock se estava ativo
+      if (wakeLockRequested) await acquireWakeLock();
+    } catch (e) {
+      setStatus("Erro ao acessar câmera: " + e.message, "error");
+    }
+  };
+
+  ws.onclose = (e) => {
+    stopLoop();
+    sending = false;
+    liveDot.classList.remove("live");
+
+    if (e.code === 4003) {
+      // PIN inválido — não tenta reconectar
+      userClosedConnection = true;
+      onConnectionLost("PIN inválido. Verifique no terminal do PC.");
+      return;
+    }
+    if (e.code === 4009) {
+      // Outro cliente conectou — não reconecta automaticamente
+      userClosedConnection = true;
+      onConnectionLost("Outro celular conectou no PC — apenas um por vez.");
+      return;
+    }
+
+    if (userClosedConnection) {
+      onConnectionLost(`Conexão encerrada (${e.code}).`);
+      return;
+    }
+
+    // Outros casos: tenta reconexão automática
+    scheduleReconnect(pin);
+  };
+
+  ws.onerror = () => {
+    // onclose será chamado em seguida; não mostra mensagem duplicada
+    if (!isReconnecting && !userClosedConnection) {
+      setStatus("Erro de rede — tentando reconectar…", "error");
+    }
+  };
+}
+
+function scheduleReconnect(pin) {
+  if (userClosedConnection) return;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+
+  const delayIdx = Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1);
+  const delay = RECONNECT_DELAYS[delayIdx];
+  reconnectAttempts++;
+
+  isReconnecting = true;
+  setStatus(`Reconectando em ${Math.round(delay / 1000)}s (tentativa ${reconnectAttempts})…`, "error");
+  liveDot.classList.remove("live");
+
+  // Mostra overlay temporário mas mantém a UI principal visível (com placeholder)
+  if (reconnectAttempts === 1) {
+    placeholder.style.display = "flex";
+    placeholder.innerHTML = `
+      <div class="icon">🔄</div>
+      <div>Reconectando…</div>
+      <div style="font-size:12px; opacity:0.6; margin-top:8px">Tentativa ${reconnectAttempts}</div>
+    `;
+  } else {
+    // Atualiza contador
+    const counter = placeholder.querySelector("div:last-child");
+    if (counter) counter.textContent = `Tentativa ${reconnectAttempts}`;
+  }
+
+  reconnectTimer = setTimeout(async () => {
+    if (userClosedConnection) return;
+    setStatus(`Tentando reconectar (tentativa ${reconnectAttempts})…`, "");
+    await openWebSocket(pin);
+  }, delay);
+}
+
+function onConnectionLost(message) {
+  // Cancela reconexão se houver
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  isReconnecting = false;
+  reconnectAttempts = 0;
+
+  // Para câmera
+  stopLoop();
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  sending = false;
+  liveDot.classList.remove("live");
+
+  // Para microfone
+  if (micActive) {
+    stopMicrophone();
+    micActive = false;
+    micMuted = false;
+  }
+  micToggleBtn.disabled = true;
+  micToggleBtn.textContent = "🎤 Microfone OFF";
+  micToggleBtn.classList.remove("on");
+  audioStatus.textContent = "Áudio desativado";
+  audioStatus.className = "audio-status";
+
+  // Volta para a tela de PIN
+  pinError.textContent = message;
+  pinOverlay.classList.remove("hidden");
+  topbar.classList.add("hidden");
+  stage.classList.add("hidden");
+  controls.classList.add("hidden");
+  statusBar.classList.add("hidden");
+  connectBtn.disabled = false;
+  connectBtn.textContent = "Conectar";
+  // Desabilita controles de zoom
+  zoomSlider.disabled = true;
+  zoomOutBtn.disabled = true;
+  zoomInBtn.disabled = true;
+  zoomResetBtn.disabled = true;
+  document.querySelectorAll(".zoom-quick-btn").forEach(b => b.disabled = true);
+  // Reset zoom/pan
+  currentZoom = 1.0;
+  panX = 0;
+  panY = 0;
+  zoomSlider.value = 1;
+  zoomResetBtn.textContent = "1.0×";
+  video.srcObject = null;
+  placeholder.style.display = "flex";
+  placeholder.innerHTML = `<div class="icon">📷</div><div>Aguardando câmera…</div>`;
+  orientHint.classList.remove("show");
+
+  // Libera wake lock se não há mais stream ativo
+  releaseWakeLock();
+}
+
+// --------- Wake Lock (manter tela acesa) ---------
+async function acquireWakeLock() {
+  if (!("wakeLock" in navigator)) {
+    // Navegador não suporta — mostra dica de que a tela pode apagar
+    if (wakeLockRequested && sending) {
+      wakeHint.classList.remove("hidden");
+    }
+    return;
+  }
+  try {
+    // Se já existe um wake lock ativo, não faz nada
+    if (wakeLock && wakeLock.type === "screen") {
+      wakeHint.classList.add("hidden");
+      return;
+    }
+    wakeLock = await navigator.wakeLock.request("screen");
+    console.log("[WakeLock] tela será mantida acesa");
+    wakeHint.classList.add("hidden");
+
+    // Wake lock é liberado automaticamente quando:
+    // - a aba vai para background
+    // - a tela é desligada pelo botão power
+    // - o navegador decide economizar bateria
+    wakeLock.addEventListener("release", () => {
+      console.log("[WakeLock] liberado pelo navegador");
+      wakeLock = null;
+      // Se ainda estamos enviando, mostra dica para o usuário reativar
+      if (wakeLockRequested && sending) {
+        wakeHint.classList.remove("hidden");
+      }
+    });
+  } catch (e) {
+    console.warn("[WakeLock] não foi possível adquirir:", e.name, e.message);
+    if (wakeLockRequested && sending) {
+      wakeHint.classList.remove("hidden");
+    }
+  }
+}
+
+async function releaseWakeLock() {
+  if (wakeLock) {
+    try {
+      await wakeLock.release();
+      console.log("[WakeLock] liberado");
+    } catch (e) {}
+    wakeLock = null;
+  }
+  wakeHint.classList.add("hidden");
+}
+
+// Clique na dica reativa o wake lock
+wakeHint.addEventListener("click", async () => {
+  await acquireWakeLock();
+});
+
+// Readquire wake lock quando a aba volta a ser visível
+// (navegadores liberam automaticamente ao background)
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && wakeLockRequested && sending) {
+    await acquireWakeLock();
+  }
+});
+
+// Reativa wake lock quando a janela recebe foco de novo
+window.addEventListener("focus", async () => {
+  if (wakeLockRequested && sending && !wakeLock) {
+    await acquireWakeLock();
+  }
+});
+
+// Tenta reativar wake lock em qualquer interação do usuário (caso tenha sido perdido)
+["touchstart", "click"].forEach(evt => {
+  document.addEventListener(evt, async () => {
+    if (wakeLockRequested && sending && !wakeLock) {
+      await acquireWakeLock();
+    }
+  }, { passive: true });
+});
+
+// --------- Microfone do celular (áudio) ---------
+async function toggleMic() {
+  if (!audioEnabled) return;
+
+  if (!micActive) {
+    // Ativa microfone
+    try {
+      await startMicrophone();
+      micActive = true;
+      micMuted = false;
+      micToggleBtn.textContent = "🎤 Microfone ON";
+      micToggleBtn.classList.add("on");
+      audioStatus.textContent = "Transmitindo…";
+      audioStatus.className = "audio-status active";
+    } catch (e) {
+      console.error("[mic] erro ao iniciar:", e);
+      audioStatus.textContent = "Erro: " + e.message;
+      audioStatus.className = "audio-status error";
+    }
+  } else {
+    // Desativa microfone (toggle entre ON e MUTE, ou OFF se clicar de novo)
+    if (!micMuted) {
+      // Primeiro clique em ON = mute
+      micMuted = true;
+      micToggleBtn.textContent = "🔇 Microfone MUTE";
+      micToggleBtn.classList.remove("on");
+      audioStatus.textContent = "Mutado";
+      audioStatus.className = "audio-status";
+      // Para de enviar dados mas mantém mic aberto
+    } else {
+      // Segundo clique = desliga tudo
+      await stopMicrophone();
+      micActive = false;
+      micMuted = false;
+      micToggleBtn.textContent = "🎤 Microfone OFF";
+      micToggleBtn.classList.remove("on");
+      audioStatus.textContent = "Pronto p/ ativar";
+      audioStatus.className = "audio-status";
+    }
+  }
+}
+
+async function startMicrophone() {
+  if (micStream) return;
+
+  // 1) Captura microfone
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+      sampleRate: audioSampleRate,
+    },
+    video: false,
+  });
+  console.log("[mic] stream capturada:", micStream.getAudioTracks()[0].label);
+
+  // 2) Cria AudioContext (precisa de gesto do usuário — toggle é ok)
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  audioContext = new Ctx({ sampleRate: audioSampleRate, latencyHint: "interactive" });
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
+  console.log("[mic] AudioContext sampleRate:", audioContext.sampleRate);
+
+  // 3) Abre WebSocket de áudio separado
+  await openAudioWebSocket();
+
+  // 4) Conecta ScriptProcessorNode (compatível com todos os navegadores)
+  // AudioWorklet seria mais moderno mas exige arquivo JS separado (CORS-safe).
+  const source = audioContext.createMediaStreamSource(micStream);
+  // Buffer 4096 samples ≈ 85ms @ 48kHz — bom equilíbrio latência/CPU
+  const bufferSize = 4096;
+  audioProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+  audioProcessor.onaudioprocess = (e) => {
+    if (!micMuted && audioWs && audioWs.readyState === WebSocket.OPEN) {
+      const input = e.inputBuffer.getChannelData(0);  // Float32, -1..1
+      // Converte Float32 -> Int16 PCM little-endian
+      const pcm = float32ToInt16LE(input);
+      // Envia apenas se houver signal (economiza banda em silêncio total)
+      audioWs.send(pcm.buffer);
+    }
+  };
+
+  source.connect(audioProcessor);
+  audioProcessor.connect(audioContext.destination);  // necessário para ScriptProcessor
+  console.log("[mic] capturando e enviando PCM 16-bit mono @", audioContext.sampleRate, "Hz");
+}
+
+function float32ToInt16LE(float32) {
+  const out = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    let s = Math.max(-1, Math.min(1, float32[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return out;
+}
+
+async function openAudioWebSocket() {
+  if (audioWs && audioWs.readyState === WebSocket.OPEN) return;
+
+  const pin = pinInput.value.trim();
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${proto}//${location.host}/ws/audio?pin=${encodeURIComponent(pin)}`;
+
+  return new Promise((resolve, reject) => {
+    try {
+      audioWs = new WebSocket(url);
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    audioWs.binaryType = "arraybuffer";
+
+    audioWs.onopen = () => {
+      console.log("[mic] WS de áudio conectado");
+      resolve();
+    };
+    audioWs.onclose = (e) => {
+      console.log("[mic] WS de áudio fechado:", e.code, e.reason);
+      // Se ainda ativo e não foi intencional, tenta reabrir após 1s
+      if (micActive && !userClosedConnection && e.code !== 4003 && e.code !== 4004) {
+        setTimeout(() => {
+          if (micActive) openAudioWebSocket().catch(() => {});
+        }, 1000);
+      }
+    };
+    audioWs.onerror = () => {
+      // onclose vai tratar
+    };
+
+    // Timeout de 5s para conectar
+    setTimeout(() => {
+      if (audioWs.readyState !== WebSocket.OPEN) {
+        reject(new Error("timeout ao conectar WS de áudio"));
+      }
+    }, 5000);
+  });
+}
+
+async function stopMicrophone() {
+  if (audioProcessor) {
+    try { audioProcessor.disconnect(); } catch (e) {}
+    audioProcessor.onaudioprocess = null;
+    audioProcessor = null;
+  }
+  if (audioContext) {
+    try { await audioContext.close(); } catch (e) {}
+    audioContext = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+  if (audioWs) {
+    try { audioWs.close(); } catch (e) {}
+    audioWs = null;
+  }
+  console.log("[mic] parado");
+}
+
+// --------- Câmera ---------
+async function startCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+
+  const constraints = {
+    video: {
+      facingMode: { ideal: currentFacing },
+      width:  { ideal: WIDTH  },
+      height: { ideal: HEIGHT },
+      frameRate: { ideal: TARGET_FPS },
+    },
+    audio: false,
+  };
+
+  stream = await navigator.mediaDevices.getUserMedia(constraints);
+  video.srcObject = stream;
+  await video.play();
+  placeholder.style.display = "none";
+
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    ctx = canvas.getContext("2d", { alpha: false });
+  }
+}
+
+async function flipCamera() {
+  currentFacing = currentFacing === "environment" ? "user" : "environment";
+  flipBtn.disabled = true;
+  // Reset zoom/pan ao trocar de câmera
+  resetZoom();
+  try {
+    await startCamera();
+  } catch (e) {
+    setStatus("Erro ao trocar câmera: " + e.message, "error");
+  } finally {
+    flipBtn.disabled = false;
+  }
+}
+
+function toggleStream() {
+  paused = !paused;
+  sending = !paused;
+  toggleBtn.textContent = paused ? "▶ Retomar" : "⏸ Pausar";
+  setStatus(paused ? "Pausado" : "Transmitindo", paused ? "" : "connected");
+  if (!paused) {
+    loop();
+    // Reativa wake lock ao retomar
+    if (wakeLockRequested) acquireWakeLock();
+  } else {
+    // Ao pausar, libera wake lock para economizar bateria
+    releaseWakeLock();
+  }
+}
+
+// --------- Zoom & Pan helpers ---------
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function setZoom(z) {
+  const oldZoom = currentZoom;
+  currentZoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
+  zoomSlider.value = currentZoom;
+  zoomResetBtn.textContent = currentZoom.toFixed(1) + "×";
+  zoomIndicator.textContent = currentZoom.toFixed(1) + "×";
+
+  // Atualiza botões quick de zoom (destaca o ativo)
+  document.querySelectorAll(".zoom-quick-btn").forEach(btn => {
+    const btnZoom = parseFloat(btn.dataset.zoom);
+    if (Math.abs(btnZoom - currentZoom) < 0.05) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+
+  // Mostra indicador visual sempre que zoom > 1
+  if (currentZoom > 1.001) {
+    zoomIndicator.classList.add("show");
+    if (Math.abs(currentZoom - oldZoom) > 0.01) {
+      zoomIndicator.classList.add("changed");
+      clearTimeout(setZoom._pulseTimer);
+      setZoom._pulseTimer = setTimeout(() => {
+        zoomIndicator.classList.remove("changed");
+      }, 300);
+    }
+  } else {
+    zoomIndicator.classList.remove("show");
+  }
+
+  // Reset pan quando volta a 1×
+  if (currentZoom <= 1.001) {
+    panX = 0;
+    panY = 0;
+  } else {
+    clampPan();
+  }
+
+  console.log("[zoom] setZoom:", oldZoom.toFixed(2), "→", currentZoom.toFixed(2));
+
+  // Força redesenho imediato do canvas (não espera próximo frame)
+  if (canvas && ctx && video.readyState >= 2 && video.videoWidth > 0) {
+    drawFrameToCanvas();
+  }
+}
+
+function zoomBy(delta) {
+  setZoom(currentZoom + delta);
+}
+
+function resetZoom() {
+  setZoom(1.0);
+  panX = 0;
+  panY = 0;
+}
+
+function clampPan() {
+  // Limita pan proporcionalmente ao zoom: quanto maior o zoom, mais liberdade
+  const maxPan = Math.max(0, (currentZoom - 1) / currentZoom);  // 0..~0.75
+  panX = clamp(panX, -maxPan, maxPan);
+  panY = clamp(panY, -maxPan, maxPan);
+}
+
+// --------- Loop de captura ---------
+function loop() {
+  if (!sending || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (paused) { rafId = null; return; }
+
+  const now = performance.now();
+  if (now - lastSentTime >= FRAME_INTERVAL_MS && video.readyState >= 2 && video.videoWidth > 0) {
+    lastSentTime = now;
+    try {
+      drawFrameToCanvas();
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) return;
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          blob.arrayBuffer().then((buf) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(buf);
+          });
+        },
+        "image/jpeg",
+        JPEG_QUALITY
+      );
+    } catch (e) {
+      console.warn("Erro ao capturar frame:", e);
+    }
+
+    frameCount++;
+    if (now - lastFpsTime >= 1000) {
+      const fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
+      fpsEl.textContent = fps + " fps";
+      frameCount = 0;
+      lastFpsTime = now;
+      liveDot.classList.add("live");
+    }
+  }
+
+  rafId = requestAnimationFrame(loop);
+}
+
+/**
+ * Desenha o frame do <video> no <canvas> (1280x720) SEM distorcer.
+ *
+ * Estratégia simples e robusta:
+ *   1. Calcula retângulo src que mantém aspect ratio do canvas (cover)
+ *   2. Se zoom > 1, reduz src pela metade do zoom (recorta centro)
+ *   3. drawImage com 9 args (sx, sy, sw, sh, dx, dy, dw, dh)
+ */
+let _drawFrameLogCounter = 0;
+function drawFrameToCanvas() {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (vw === 0 || vh === 0) return;
+
+  // Dimensões do retângulo source no vídeo (mantendo 16:9)
+  let sw, sh, sx, sy;
+  const targetAspect = WIDTH / HEIGHT;  // 1.778
+  const videoAspect = vw / vh;
+
+  if (videoAspect > targetAspect) {
+    // Vídeo mais largo — corta laterais
+    sh = vh;
+    sw = vh * targetAspect;
+  } else {
+    // Vídeo mais alto (portrait) — corta topo/baixo
+    sw = vw;
+    sh = vw / targetAspect;
+  }
+  // Centro inicial
+  sx = (vw - sw) / 2;
+  sy = (vh - sh) / 2;
+
+  // Aplica ZOOM: recorta uma região menor do centro do retângulo
+  const z = currentZoom;
+  if (z > 1.001) {
+    const newSw = sw / z;
+    const newSh = sh / z;
+    // Desloca sx/sy para manter o centro + pan
+    sx = sx + (sw - newSw) / 2 + (panX * (sw - newSw) / 2);
+    sy = sy + (sh - newSh) / 2 + (panY * (sh - newSh) / 2);
+    sw = newSw;
+    sh = newSh;
+  }
+
+  // Desenha no canvas — espelha para câmera frontal (selfie)
+  ctx.save();
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  if (currentFacing === "user") {
+    ctx.translate(WIDTH, 0);
+    ctx.scale(-1, 1);
+  }
+
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, WIDTH, HEIGHT);
+  ctx.restore();
+
+  // Log esporádico para debug
+  _drawFrameLogCounter++;
+  if (_drawFrameLogCounter % 30 === 0) {
+    console.log(`[draw] z=${z.toFixed(2)} video=${vw}x${vh} src=(${sx.toFixed(0)},${sy.toFixed(0)},${sw.toFixed(0)},${sh.toFixed(0)})`);
+  }
+}
+
+function stopLoop() {
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+}
+
+// --------- Detecção de orientação ---------
+function updateOrientationHint() {
+  if (!video || !video.videoWidth) return;
+  const portrait = video.videoHeight > video.videoWidth;
+  if (portrait) {
+    orientHint.classList.add("show");
+    // Auto-esconde depois de 3s
+    clearTimeout(updateOrientationHint._t);
+    updateOrientationHint._t = setTimeout(() => {
+      orientHint.classList.remove("show");
+    }, 3000);
+  } else {
+    orientHint.classList.remove("show");
+  }
+}
+
+// Evento 'resize' do vídeo (orientação mudou)
+if (video) {
+  video.addEventListener("resize", updateOrientationHint);
+}
+
+// --------- Helpers ---------
+function setStatus(msg, cls = "") {
+  statusBar.textContent = msg;
+  statusBar.className = "status-bar " + cls;
+}
+
+// --------- Eventos ---------
+pinInput.addEventListener("input", (e) => {
+  e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6);
+});
+pinInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") connect();
+});
+window.addEventListener("beforeunload", () => {
+  userClosedConnection = true;  // evita reconexão fantasma
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (ws) ws.close();
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  if (micActive) stopMicrophone();
+  releaseWakeLock();
+});
+
+// --------- Pinch-to-zoom + drag-to-pan (touch) ---------
+// Funciona no <video> enquanto o stream está ativo
+function touchDist(t1, t2) {
+  const dx = t1.clientX - t2.clientX;
+  const dy = t1.clientY - t2.clientY;
+  return Math.hypot(dx, dy);
+}
+
+video.addEventListener("touchstart", (e) => {
+  if (e.touches.length === 2) {
+    // Início do pinch
+    pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+    pinchStartZoom = currentZoom;
+    isDragging = false;
+    e.preventDefault();  // não rola a página
+  } else if (e.touches.length === 1 && currentZoom > 1.001) {
+    // Início do drag (só quando tem zoom)
+    dragStartX = e.touches[0].clientX;
+    dragStartY = e.touches[0].clientY;
+    dragStartPanX = panX;
+    dragStartPanY = panY;
+    isDragging = true;
+  }
+}, { passive: false });
+
+video.addEventListener("touchmove", (e) => {
+  if (e.touches.length === 2 && pinchStartDist > 0) {
+    // Pinch: ajusta zoom proporcionalmente à variação da distância
+    const dist = touchDist(e.touches[0], e.touches[1]);
+    const ratio = dist / pinchStartDist;
+    setZoom(pinchStartZoom * ratio);
+    e.preventDefault();
+  } else if (e.touches.length === 1 && isDragging) {
+    // Drag: move a janela de crop
+    const dx = e.touches[0].clientX - dragStartX;
+    const dy = e.touches[0].clientY - dragStartY;
+    // Converte pixels de drag para fração do pan
+    // (sinal invertido: arrastar para direita mostra a parte esquerda do vídeo)
+    const rect = video.getBoundingClientRect();
+    panX = dragStartPanX - (dx / rect.width)  * 2 * ((currentZoom - 1) / currentZoom);
+    panY = dragStartPanY - (dy / rect.height) * 2 * ((currentZoom - 1) / currentZoom);
+    clampPan();
+    e.preventDefault();
+  }
+}, { passive: false });
+
+video.addEventListener("touchend", (e) => {
+  if (e.touches.length < 2) pinchStartDist = 0;
+  if (e.touches.length === 0) isDragging = false;
+}, { passive: false });
+
+// Mouse wheel para zoom (útil em teste no desktop)
+video.addEventListener("wheel", (e) => {
+  if (!sending) return;
+  e.preventDefault();
+  const delta = -Math.sign(e.deltaY) * 0.2;
+  setZoom(currentZoom + delta);
+}, { passive: false });
+
+// --------- Event listeners dos botões (não usa onclick inline para evitar race) ---------
+flipBtn.addEventListener("click", flipCamera);
+toggleBtn.addEventListener("click", toggleStream);
+zoomOutBtn.addEventListener("click", () => zoomBy(-0.25));
+zoomInBtn.addEventListener("click", () => zoomBy(0.25));
+zoomResetBtn.addEventListener("click", resetZoom);
+zoomSlider.addEventListener("input", (e) => setZoom(parseFloat(e.target.value)));
+micToggleBtn.addEventListener("click", toggleMic);
+
+// Botões quick de zoom (1×, 2×, 3×, 4×)
+document.querySelectorAll(".zoom-quick-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const z = parseFloat(btn.dataset.zoom);
+    console.log("[zoom] quick button:", z);
+    setZoom(z);
+  });
+});
+
+// --------- Auto-conexão via PIN na URL (?pin=XXXXXX) ---------
+// Permite que o QR Code escaneado conecte direto sem digitar o PIN
+(function autoConnectFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const urlPin = params.get("pin");
+  if (urlPin && /^\d{6}$/.test(urlPin)) {
+    console.log("[auto-connect] PIN encontrado na URL:", urlPin);
+    pinInput.value = urlPin;
+    // Pequeno delay para a página terminar de renderizar
+    setTimeout(() => {
+      connect();
+    }, 300);
+  }
+})();
+
+// Auto-foco no input (só se não tem PIN na URL)
+if (!new URLSearchParams(window.location.search).get("pin")) {
+  pinInput.focus();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phone-webcam"
+version = "1.0.0"
+description = "Use your phone's camera as a virtual webcam on PC (Windows/macOS/Linux)"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "xz_slaaa", email = "xz_slaaa@example.com"}
+]
+maintainers = [
+    {name = "xz_slaaa"}
+]
+keywords = [
+    "webcam", "virtual-camera", "phone", "mobile", "camera", "obs", "discord",
+    "zoom", "teams", "v4l2loopback", "pyvirtualcam", "fastapi", "websocket"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video :: Capture",
+    "Topic :: Communications :: Conferencing",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.27,<1.0",
+    "pillow>=10.0,<12.0",
+    "numpy>=1.24,<3.0",
+    "pyvirtualcam>=0.10,<1.0",
+    "cryptography>=42.0,<46.0",
+    "qrcode[pil]>=7.4,<9.0",
+    "pyaudio>=0.2.13,<1.0",
+]
+optional-dependencies = { dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.5", "black>=24.0", "pip-audit>=2.7"], audio = [] }
+
+[project.urls]
+Homepage = "https://github.com/xz_slaaa/phone-webcam"
+Repository = "https://github.com/xz_slaaa/phone-webcam"
+Issues = "https://github.com/xz_slaaa/phone-webcam/issues"
+Documentation = "https://github.com/xz_slaaa/phone-webcam#readme"
+
+[project.scripts]
+phone-webcam = "server:main"
+phone-webcam-install = "install:main"
+phone-webcam-run = "run:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+indent-width = 4
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "C4",
+    "T20",
+]
+ignore = [
+    "E501",
+    "B008",
+    "T201",
+]
+per-file-ignores = {
+    "install.py" = ["S603", "S607"],
+    "server.py" = ["S603", "S607", "T201"],
+}
+exclude = [
+    "venv",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    "certs",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+include = "\\.pyi?$"
+exclude = """
+/(
+    \.venv
+  | venv
+  | __pycache__
+  | \.git
+  | certs
+)/
+"""
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --strict-markers"
+
+[tool.pytest.markers]
+slow = "marks tests as slow"
+integration = "marks tests as integration (requires hardware)"
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "venv/*",
+    "tests/*",
+    "install.py",
+    "run.py",
+    "server.py",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

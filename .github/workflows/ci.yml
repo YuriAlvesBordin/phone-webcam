@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y v4l2loopback-dkms v4l-utils portaudio19-dev python3-venv dkms linux-headers-$(uname -r)
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install portaudio
+
+      - name: Create venv & install deps
+        run: |
+          python -m venv venv
+          source venv/bin/activate 2>/dev/null || venv\Scripts\activate
+          pip install --upgrade pip wheel
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio ruff black
+
+      - name: Ruff lint
+        run: |
+          source venv/bin/activate 2>/dev/null || venv\Scripts\activate
+          ruff check .
+
+      - name: Black format check
+        run: |
+          source venv/bin/activate 2>/dev/null || venv\Scripts\activate
+          black --check .
+
+      - name: Basic import test
+        run: |
+          source venv/bin/activate 2>/dev/null || venv\Scripts\activate
+          python -c "import server; import install; import run; print('✓ Imports OK')"
+
+      - name: Test CLI help
+        run: |
+          source venv/bin/activate 2>/dev/null || venv\Scripts\activate
+          python server.py --help
+          python install.py --help
+          python run.py --help
+
+  # Build & test install script on Linux (most complex OS)
+  install-test-linux:
+    name: Install Script Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y v4l2loopback-dkms v4l-utils portaudio19-dev python3-venv dkms linux-headers-$(uname -r)
+
+      - name: Run install.py --skip-system
+        run: |
+          python install.py --skip-system
+
+      - name: Verify venv created
+        run: |
+          test -d venv
+          test -f venv/bin/python
+
+      - name: Verify key packages installed
+        run: |
+          source venv/bin/activate
+          python -c "import fastapi, uvicorn, pillow, numpy, pyvirtualcam, cryptography, qrcode, pyaudio; print('✓ All packages import OK')"
+
+  # Verify README renders correctly
+  readme-check:
+    name: README Render Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check README links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          config-file: '.github/markdown-link-check-config.json'
+
+  # Security scan
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+  # Release draft on tag
+  release-draft:
+    name: Draft Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint-and-test, install-test-linux, readme-check, security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate changelog
+        run: |
+          git log --pretty=format:"- %s (%h)" $(git describe --tags --abbrev=0 HEAD^)..HEAD > CHANGELOG.md
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            README.md
+            LICENSE
+            CHANGELOG.md

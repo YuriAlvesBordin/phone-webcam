@@ -1,0 +1,60 @@
+---
+name: Feature Request
+description: Sugerir uma nova funcionalidade ou melhoria
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado pela sugestão! Descreva abaixo o que gostaria de ver no PhoneCam.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema / Motivação
+      description: Qual problema isso resolve? Qual caso de uso?
+      placeholder: "Ex: Quero usar o PhoneCam em 4K para streaming de alta qualidade, mas o limite atual é 1080p."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Solução Proposta
+      description: Como você imagina que funcionaria?
+      placeholder: "Adicionar opção --width 3840 --height 2160 e ajustar encoding JPEG quality dinamicamente."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas Consideradas
+      description: Outras formas de resolver ou workarounds atuais
+      placeholder: "Atualmente uso OBS + plugin NDI como workaround, mas adiciona latência."
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área do Projeto
+      options:
+        - "Vídeo (resolução, FPS, zoom, pan, codecs)"
+        - "Áudio (microfone, latência, codecs, dispositivos virtuais)"
+        - "Conectividade (WebSocket, reconexão, PIN, QR Code)"
+        - "Interface Mobile (UI, controles, wake lock, orientação)"
+        - "Instalação/Setup (install.py, pacotes de sistema, venv)"
+        - "Documentação (README, FAQ, troubleshooting)"
+        - "CI/CD / Empacotamento / Release"
+        - "Outro"
+    validations:
+      required: true
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Disposição
+      options:
+        - label: Estou disposto a implementar (preciso de orientação)
+          required: false
+        - label: Posso testar / dar feedback em PRs
+          required: false
+        - label: Apenas sugiro a ideia
+          required: false

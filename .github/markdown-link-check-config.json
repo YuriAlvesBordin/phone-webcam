@@ -1,0 +1,19 @@
+{
+  "replacementPatterns": [
+    {
+      "pattern": "^https?://192\\.168\\.\\d+\\.\\d+",
+      "replacement": "https://example.com"
+    },
+    {
+      "pattern": "^https?://localhost:\\d+",
+      "replacement": "https://example.com"
+    }
+  ],
+  "ignorePatterns": [
+    "^https?://192\\.168\\.",
+    "^https?://10\\.",
+    "^https?://172\\.(1[6-9]|2[0-9]|3[0-1])\\.",
+    "^https?://localhost"
+  ],
+  "aliveStatusCodes": [200, 206, 301, 302, 307, 308]
+}
