@@ -11,6 +11,9 @@ htmlcov/
 dist/
 build/
 
+# Test scripts stay local (not published to the repo)
+tests/
+
 # Project specific
 certs/
 *.pem
@@ -25,6 +28,9 @@ certs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Session artifacts
+.zcode/
 
 # Logs
 *.log
