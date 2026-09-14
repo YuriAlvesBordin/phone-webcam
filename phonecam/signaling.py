@@ -27,6 +27,74 @@ from phonecam.webrtc import HAS_AIORTC, RTCSession
 log = logging.getLogger(__name__)
 
 
+def _parse_ice_candidate(candidate: str) -> dict | None:
+    """
+    Parse an SDP ICE candidate string into fields for aiortc.RTCIceCandidate.
+
+    Expected format (RFC 5245):
+      candidate:<foundation> <component> <protocol> <priority>
+                <ip> <port> typ <type>
+                [raddr <rel-addr> rport <rel-port>]
+                [tcptype <tcp-type>]
+
+    Returns a dict with keys matching RTCIceCandidate.__init__ params,
+    or None if parsing fails.
+    """
+    if not candidate.startswith("candidate:"):
+        return None
+    # Full format: candidate:<foundation> <component> <transport> <priority>
+    #              <ip> <port> typ <type> [extensions...]
+    # Split by whitespace - "candidate:X" stays as one token
+    parts = candidate.split()
+    if len(parts) < 8 or parts[6] != "typ":
+        return None
+
+    try:
+        # parts = ["candidate:X", component, transport, priority, ip, port, "typ", type, ...]
+        foundation = parts[0].split(":", 1)[1]  # extract X from "candidate:X"
+        component = int(parts[1])
+        protocol = parts[2].lower()
+        priority = int(parts[3])
+        ip = parts[4]
+        port = int(parts[5])
+        # parts[6] == "typ"
+        cand_type = parts[7].lower()
+
+        related_addr = None
+        related_port = None
+        tcp_type = None
+
+        # Optional extensions
+        i = 8
+        while i < len(parts):
+            if parts[i] == "raddr" and i + 1 < len(parts):
+                related_addr = parts[i + 1]
+                i += 2
+            elif parts[i] == "rport" and i + 1 < len(parts):
+                related_port = int(parts[i + 1])
+                i += 2
+            elif parts[i] == "tcptype" and i + 1 < len(parts):
+                tcp_type = parts[i + 1]
+                i += 2
+            else:
+                i += 1
+
+        return {
+            "component": component,
+            "foundation": foundation,
+            "ip": ip,
+            "port": port,
+            "priority": priority,
+            "protocol": protocol,
+            "type": cand_type,
+            "relatedAddress": related_addr,
+            "relatedPort": related_port,
+            "tcpType": tcp_type,
+        }
+    except (ValueError, IndexError):
+        return None
+
+
 class SessionManager:
     """Tracks the single active session; a new client kicks the previous one
     (video and audio share one PeerConnection, so this also fixes the old
@@ -145,7 +213,16 @@ async def signal_endpoint(ws: WebSocket) -> None:
                 answer_sdp = await session.handle_offer(msg["sdp"])
                 await ws.send_text(json.dumps({"type": "answer", "sdp": answer_sdp}))
             elif mtype == "candidate":
-                await session.add_candidate(msg.get("candidate") or {})
+                cand_dict = msg.get("candidate") or {}
+                # Frontend sends the raw SDP candidate string in "candidate"
+                # plus optional sdpMid/sdpMLineIndex. aiortc wants parsed fields.
+                cand_str = cand_dict.get("candidate")
+                if cand_str:
+                    parsed = _parse_ice_candidate(cand_str)
+                    if parsed:
+                        parsed["sdpMid"] = cand_dict.get("sdpMid")
+                        parsed["sdpMLineIndex"] = cand_dict.get("sdpMLineIndex")
+                        await session.add_candidate(parsed)
             elif mtype == "bye":
                 break
             else:
