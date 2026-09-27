@@ -91,6 +91,11 @@ def create_app(cfg: Config, pin: str) -> FastAPI:
         response = await call_next(request)
         for key, value in SECURITY_HEADERS.items():
             response.headers.setdefault(key, value)
+        # Local static assets and the page itself must always be revalidated
+        # so phone browsers pick up client-side fixes instead of replaying a
+        # stale module (Samsung Internet caches ES modules aggressively).
+        if request.url.path.startswith(("/js/", "/css/")) or request.url.path == "/":
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.get("/")

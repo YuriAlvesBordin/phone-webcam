@@ -1,9 +1,9 @@
 // PhoneCam app: connection lifecycle, zoom/gestures, mic, stats, reconnect.
 
-import { CameraController } from "./camera.js";
-import { SignalChannel, SignalError } from "./signaling.js";
-import { PhoneCamSession } from "./webrtc.js";
-import { WakeLockManager } from "./wakelock.js";
+import { CameraController } from "./camera.js?v=2";
+import { SignalChannel, SignalError } from "./signaling.js?v=2";
+import { PhoneCamSession } from "./webrtc.js?v=2";
+import { WakeLockManager } from "./wakelock.js?v=2";
 import {
   el,
   hidePlaceholder,
@@ -20,7 +20,7 @@ import {
   showPlaceholder,
   showReconnect,
   updateZoomUi,
-} from "./ui.js";
+} from "./ui.js?v=2";
 
 const ZOOM_MIN = 1.0;
 const ZOOM_MAX = 4.0;
