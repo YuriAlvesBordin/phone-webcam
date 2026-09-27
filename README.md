@@ -37,7 +37,7 @@ Phone (browser)                         PC (Win/Mac/Linux)
 ## 🚀 Install
 
 ```bash
-git clone https://github.com/xz_slaaa/phone-webcam.git
+git clone https://github.com/YuriAlvesBordin/phone-webcam.git
 cd phone-webcam
 
 python -m venv venv

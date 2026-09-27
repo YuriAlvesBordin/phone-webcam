@@ -48,10 +48,10 @@ dependencies = [
 optional-dependencies = { dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx2", "ruff>=0.5", "black>=24.0", "pip-audit>=2.7"] }
 
 [project.urls]
-Homepage = "https://github.com/xz_slaaa/phone-webcam"
-Repository = "https://github.com/xz_slaaa/phone-webcam"
-Issues = "https://github.com/xz_slaaa/phone-webcam/issues"
-Documentation = "https://github.com/xz_slaaa/phone-webcam#readme"
+Homepage = "https://github.com/YuriAlvesBordin/phone-webcam"
+Repository = "https://github.com/YuriAlvesBordin/phone-webcam"
+Issues = "https://github.com/YuriAlvesBordin/phone-webcam/issues"
+Documentation = "https://github.com/YuriAlvesBordin/phone-webcam#readme"
 
 [project.scripts]
 phonecam = "phonecam.cli:main"
