@@ -109,10 +109,12 @@ class RTCSession:
 
         self.pc = RTCPeerConnection(RTCConfiguration())
 
-        # Declare both transceivers up front so mic toggling later reuses the
-        # existing audio m-line (renegotiation without SDP restructuring).
+        # The first offer is video-only (audio: false at connect; the mic is
+        # renegotiated later), so an audio transceiver declared here would stay
+        # unmatched. aiortc >= 1.14 then crashes in setLocalDescription
+        # (DIRECTIONS.index(None)) and the connection dies. aiortc creates the
+        # audio transceiver implicitly when a renegotiation offer carries it.
         self.pc.addTransceiver("video", direction="recvonly")
-        self.pc.addTransceiver("audio", direction="recvonly")
 
         @self.pc.on("track")
         def on_track(track) -> None:

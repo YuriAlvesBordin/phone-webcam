@@ -230,7 +230,7 @@ async def signal_endpoint(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     except Exception as e:  # noqa: BLE001
-        log.warning("Signaling error: %s", e)
+        log.warning("Signaling error: %s", e, exc_info=True)
     finally:
         await ws.app.state.manager.clear(session)
         await session.close()
