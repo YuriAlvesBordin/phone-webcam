@@ -65,14 +65,14 @@ export class PhoneCamSession {
   _waitForIceGathering(timeoutMs) {
     if (this.pc.iceGatheringState === "complete") return Promise.resolve();
     return new Promise((resolve) => {
-      const onChange = () => {
-        if (this.pc.iceGatheringState === "complete") done();
-      };
-      const timer = setTimeout(done, timeoutMs);
       const done = () => {
         clearTimeout(timer);
         this.pc.removeEventListener("icegatheringstatechange", onChange);
         resolve();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      const onChange = () => {
+        if (this.pc.iceGatheringState === "complete") done();
       };
       this.pc.addEventListener("icegatheringstatechange", onChange);
     });
