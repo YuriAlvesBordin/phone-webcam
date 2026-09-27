@@ -43,7 +43,7 @@ JPEG quadro-a-quadro via WebSocket.
   via canvas.captureStream), controle de lanterna (torch), overlay de
   estatísticas com um toque, atalhos de teclado no desktop.
 - Pacote Python modular (`phonecam/`), frontend em ES modules,
-  logging estruturado, constantes nomeadas, CI (ruff/black/pip-audit).
+  logging estruturado, constantes nomeadas.
 - README reescrito (instalação/execução reais do zero).
 
 ### Alterado
