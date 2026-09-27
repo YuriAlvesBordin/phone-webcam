@@ -21,6 +21,10 @@ PhoneCam uses WebRTC end to end: the phone encodes with its hardware
 H.264 encoder, the bitrate adapts to Wi-Fi conditions, and audio shares
 the same connection as an Opus track.
 
+> **Tested on Arch Linux.** Development and testing happen on Arch Linux
+> (KDE Plasma, PipeWire). Windows and macOS are documented but untested;
+> reports and patches for other platforms are welcome.
+
 ## Features
 
 - H.264 hardware encoding on the phone: low bandwidth, stable latency
