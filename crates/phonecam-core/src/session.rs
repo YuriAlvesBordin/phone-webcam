@@ -377,10 +377,9 @@ fn attach_stream(
     Ok(())
 }
 
-/// Contagem no pad de entrada do último elemento da cadeia (o `inter*sink`).
+/// Contagem no pad de entrada do `inter*sink` (quadros já decodificados, não pacotes RTP).
 fn add_last_sink_probe(bin: &gst::Bin, f: impl Fn(&gst::Buffer) + Send + Sync + 'static) {
-    let last = bin.iterate_sorted().into_iter().flatten().last();
-    if let Some(pad) = last.and_then(|e| e.static_pad("sink")) {
+    if let Some(pad) = bin.by_name("out").and_then(|e| e.static_pad("sink")) {
         pad.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
             if let Some(gst::PadProbeData::Buffer(b)) = &info.data {
                 f(b);

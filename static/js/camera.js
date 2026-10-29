@@ -48,18 +48,13 @@ export class CameraController {
       audio: false,
     };
 
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (e) {
-      throw new CameraError(e);
-    }
+    this.stream = await this._open(constraints);
     this.track = this.stream.getVideoTracks()[0];
     this.facing = facing;
     this._detectCapabilities();
 
     if (videoEl) {
       videoEl.srcObject = this.stream;
-      videoEl.classList.toggle("mirror", this.facingUser);
       try {
         await videoEl.play();
       } catch {
@@ -67,6 +62,19 @@ export class CameraController {
       }
     }
     return this.track;
+  }
+
+  /** getUserMedia com uma nova tentativa: ao virar, a câmera anterior pode demorar a ser liberada. */
+  async _open(constraints) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        const busy = e && (e.name === "NotReadableError" || e.name === "AbortError");
+        if (!busy || attempt >= 2) throw new CameraError(e);
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
   }
 
   _detectCapabilities() {
@@ -95,10 +103,12 @@ export class CameraController {
   async setNativeZoom(userZoom) {
     const z = this.capabilities.zoom;
     if (!z || !this.track) return false;
-    const target = Math.min(userZoom * z.min, z.max);
+    const target = Math.min(Math.max(userZoom * z.min, z.min), z.max);
     try {
       await this.track.applyConstraints({ advanced: [{ zoom: target }] });
-      return true;
+      // Alguns navegadores aceitam a restrição e ignoram: confere o que de fato ficou.
+      const got = this.track.getSettings().zoom;
+      return got == null || Math.abs(got - target) <= Math.max(z.step || 0.1, 0.1) * 1.5;
     } catch {
       return false;
     }

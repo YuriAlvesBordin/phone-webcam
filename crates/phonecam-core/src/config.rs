@@ -42,6 +42,8 @@ pub struct Config {
     pub audio: bool,
     /// Liga a webcam virtual (v4l2loopback). Desligada, só o microfone funciona.
     pub video: bool,
+    /// Reinicia o WirePlumber (uma vez) se o PipeWire não enxergar a webcam virtual.
+    pub fix_pipewire: bool,
     /// O QR já leva a credencial: escanear conecta sem digitar o PIN.
     pub qr_login: bool,
     /// Dispositivo v4l2loopback; `None` detecta sozinho.
@@ -61,6 +63,7 @@ impl Default for Config {
             https: true,
             audio: true,
             video: true,
+            fix_pipewire: true,
             qr_login: true,
             video_device: None,
         }

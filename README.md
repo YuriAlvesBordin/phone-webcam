@@ -107,6 +107,8 @@ Threat model: a trusted home LAN. This is not hardened against hostile networks.
 
 Run `phonecam doctor` first.
 
+**Google Meet / Firefox do not list the camera.** They go through PipeWire, which only creates the camera node after something is writing to the virtual device. PhoneCam checks this when you turn it on and restarts WirePlumber once if the node is missing (about 2 s without audio routing; disable with `fix_pipewire = false`). `phonecam doctor` shows whether PipeWire sees it.
+
 **Discord does not list the camera.** `cat /sys/module/v4l2loopback/parameters/exclusive_caps` must print `Y` (or `1`). Reload the module with `exclusive_caps=1`.
 
 **No microphone.** Needs `pipewire-pulse` (or PulseAudio): `pactl info` must work. The source is called "PhoneCam Mic".
@@ -122,7 +124,8 @@ Run `phonecam doctor` first.
 ## Development
 
 ```sh
-cargo test --workspace      # unit tests + end-to-end with a fake phone
+cargo test --workspace      # unit tests + end-to-end with a fake phone (H.264 and VP8) reading /dev/video10
+node --test tests-js/       # zoom/pan math of the phone UI
 cargo clippy --workspace --all-targets
 ```
 

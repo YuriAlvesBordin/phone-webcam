@@ -31,16 +31,21 @@ fn text(m: &str) -> Message {
 }
 
 /// Celular falso: manda vídeo H.264 e áudio Opus de teste.
-fn fake_phone(tx: mpsc::UnboundedSender<Phone>) -> (gst::Pipeline, gst::Element) {
-    let pipeline = gst::parse::launch(
+fn fake_phone(tx: mpsc::UnboundedSender<Phone>, vp8: bool) -> (gst::Pipeline, gst::Element) {
+    let video = if vp8 {
+        "vp8enc deadline=1 cpu-used=8 ! rtpvp8pay pt=96 ! \
+         application/x-rtp,media=video,encoding-name=VP8,payload=96"
+    } else {
+        "openh264enc bitrate=1000000 ! h264parse ! rtph264pay config-interval=-1 pt=96 ! \
+         application/x-rtp,media=video,encoding-name=H264,payload=96"
+    };
+    let pipeline = gst::parse::launch(&format!(
         "webrtcbin name=w bundle-policy=max-bundle \
          videotestsrc is-live=true pattern=smpte ! video/x-raw,width=640,height=480,framerate=30/1 ! \
-           videoconvert ! openh264enc bitrate=1000000 ! h264parse ! \
-           rtph264pay config-interval=-1 pt=96 ! \
-           application/x-rtp,media=video,encoding-name=H264,payload=96 ! w. \
+           videoconvert ! {video} ! w. \
          audiotestsrc is-live=true ! audioconvert ! audioresample ! opusenc ! rtpopuspay pt=97 ! \
-           application/x-rtp,media=audio,encoding-name=OPUS,payload=97 ! w.",
-    )
+           application/x-rtp,media=audio,encoding-name=OPUS,payload=97 ! w."
+    ))
     .unwrap()
     .downcast::<gst::Pipeline>()
     .unwrap();
@@ -73,7 +78,11 @@ fn fake_phone(tx: mpsc::UnboundedSender<Phone>) -> (gst::Pipeline, gst::Element)
 }
 
 /// Conecta o celular falso ao serviço e mantém a sinalização rodando em segundo plano.
-async fn connect_phone(port: u16, pin: &str) -> (gst::Pipeline, tokio::task::JoinHandle<()>) {
+async fn connect_phone(
+    port: u16,
+    pin: &str,
+    vp8: bool,
+) -> (gst::Pipeline, tokio::task::JoinHandle<()>) {
     let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/signal"))
         .await
         .unwrap();
@@ -87,7 +96,7 @@ async fn connect_phone(port: u16, pin: &str) -> (gst::Pipeline, tokio::task::Joi
     assert!(t.contains("auth_ok"), "{t}");
 
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let (pipeline, w) = fake_phone(tx);
+    let (pipeline, w) = fake_phone(tx, vp8);
     pipeline.set_state(gst::State::Playing).unwrap();
     let task = tokio::spawn(async move {
         loop {
@@ -140,7 +149,7 @@ async fn video_do_celular_chega_ao_servico() {
     assert_eq!(st.phase, Phase::Waiting);
     assert_eq!(st.pin, "424242");
 
-    let (pipeline, task) = connect_phone(port, "424242").await;
+    let (pipeline, task) = connect_phone(port, "424242", false).await;
     let mut live = false;
     let mut audio_seen = false;
     let mut status = ctl.hub().subscribe();
@@ -172,6 +181,13 @@ async fn video_do_celular_chega_ao_servico() {
 /// imagem do celular (barras coloridas) chega. Pulado onde o v4l2loopback não existe.
 #[tokio::test(flavor = "multi_thread")]
 async fn webcam_virtual_recebe_a_imagem_do_celular() {
+    // Celulares reais mandam VP8 ou H.264 conforme o navegador: os dois têm de funcionar.
+    for vp8 in [false, true] {
+        camera_com_codec(vp8).await;
+    }
+}
+
+async fn camera_com_codec(vp8: bool) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("phonecam_core=debug")
         .try_init();
@@ -196,7 +212,7 @@ async fn webcam_virtual_recebe_a_imagem_do_celular() {
         eprintln!("pulado: sem acesso a {}: {:?}", dev.path, st.warnings);
         return;
     }
-    let (pipeline, task) = connect_phone(port, "424242").await;
+    let (pipeline, task) = connect_phone(port, "424242", vp8).await;
 
     let mut status = ctl.hub().subscribe();
     let live = tokio::time::timeout(Duration::from_secs(25), async {
@@ -206,7 +222,7 @@ async fn webcam_virtual_recebe_a_imagem_do_celular() {
     })
     .await
     .is_ok();
-    assert!(live, "o vídeo não chegou ao serviço");
+    assert!(live, "vp8={vp8}: o vídeo não chegou ao serviço");
 
     // Lê um quadro da webcam virtual e mede o contraste da luminância (Y de cada YUY2).
     let reader = gst::parse::launch(&format!(
@@ -245,7 +261,7 @@ async fn webcam_virtual_recebe_a_imagem_do_celular() {
     eprintln!("quadros lidos: {got}");
     assert!(
         best > 100,
-        "a webcam virtual só mostrou imagem sem contraste ({best})"
+        "vp8={vp8}: a webcam virtual só mostrou imagem sem contraste ({best})"
     );
 }
 

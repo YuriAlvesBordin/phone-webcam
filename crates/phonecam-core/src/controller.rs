@@ -15,7 +15,7 @@ use crate::net::{connection_url, local_ips};
 use crate::security::{generate_pin, generate_token};
 use crate::server::{router, App};
 use crate::status::{Phase, Status};
-use crate::{tls, vcam};
+use crate::{pipewire, tls, vcam};
 
 struct Running {
     app: Arc<App>,
@@ -105,6 +105,9 @@ impl Controller {
         );
         warnings.extend(problems);
         outputs.settle();
+        if outputs.has_video() && cfg.fix_pipewire {
+            spawn_pipewire_check();
+        }
 
         let ips = local_ips();
         let cert = if cfg.https {
@@ -244,4 +247,20 @@ impl Controller {
 /// Atalho para diagnósticos (`phonecam doctor`).
 pub fn audio_server_available() -> bool {
     audio::server_available()
+}
+
+/// Depois de a webcam ter quadros, confere se o PipeWire a enxerga (Meet/Firefox só usam o PipeWire).
+fn spawn_pipewire_check() {
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+        let _ = tokio::task::spawn_blocking(|| {
+            if pipewire::camera_visible() == Some(false) {
+                tracing::info!("PipeWire não vê a webcam virtual: reiniciando o WirePlumber (uma vez)");
+                if !pipewire::restart_wireplumber() {
+                    tracing::warn!("não consegui reiniciar o WirePlumber; Meet/Firefox podem não listar a câmera");
+                }
+            }
+        })
+        .await;
+    });
 }

@@ -18,19 +18,27 @@ use crate::error::Error;
 pub const VIDEO_CHANNEL: &str = "phonecam-video";
 pub const AUDIO_CHANNEL: &str = "phonecam-audio";
 
-/// Descrição do pipeline de vídeo de saída (separada para ser testável).
+/// Caps fixos do que vai para a webcam virtual.
 ///
-/// `colorimetry` explícito é obrigatório: sem ele o `intervideosrc` fixa uma colorimetria que o
-/// v4l2sink recusa (`not-negotiated`) e a webcam virtual nunca recebe quadros.
+/// O v4l2sink só aceita UM formato por sessão: qualquer mudança nos caps depois do primeiro
+/// quadro (outro codec, `interlace-mode`, `chroma-site`, colorimetria) vira `S_FMT: busy` e a
+/// webcam morre. Por isso o `capssetter` logo antes dele reescreve TODOS os campos, e o
+/// `colorimetry` explícito evita o `not-negotiated` na primeira negociação.
+pub fn video_out_caps(cfg: &Config) -> String {
+    format!(
+        "video/x-raw,format=YUY2,width={},height={},framerate={}/1,colorimetry=bt601,\
+         interlace-mode=progressive,pixel-aspect-ratio=1/1",
+        cfg.width, cfg.height, cfg.fps
+    )
+}
+
+/// Descrição do pipeline de vídeo de saída (separada para ser testável).
 pub fn video_out_description(cfg: &Config, device: &str) -> String {
+    let caps = video_out_caps(cfg);
     format!(
         "intervideosrc channel={VIDEO_CHANNEL} ! videoconvert ! videoscale add-borders=true ! \
-         videorate ! video/x-raw,format=YUY2,width={w},height={h},framerate={fps}/1,\
-         colorimetry=bt601,interlace-mode=progressive,pixel-aspect-ratio=1/1 ! \
-         v4l2sink device={device} sync=false",
-        w = cfg.width,
-        h = cfg.height,
-        fps = cfg.fps,
+         videorate ! {caps} ! capssetter replace=true caps=\"{caps}\" ! \
+         v4l2sink device={device} sync=false"
     )
 }
 
@@ -43,11 +51,11 @@ pub fn audio_out_description() -> String {
 }
 
 /// Parte final da cadeia de vídeo de uma sessão (depois do decodificador).
-pub const VIDEO_SESSION_TAIL: &str = "intervideosink channel=phonecam-video sync=false";
+pub const VIDEO_SESSION_TAIL: &str = "intervideosink name=out channel=phonecam-video sync=false";
 
 pub const AUDIO_SESSION_TAIL: &str = "audioconvert ! audioresample ! \
      audio/x-raw,format=S16LE,rate=48000,channels=1 ! \
-     interaudiosink channel=phonecam-audio sync=false";
+     interaudiosink name=out channel=phonecam-audio sync=false";
 
 struct Output {
     pipeline: gst::Pipeline,
@@ -164,7 +172,10 @@ mod tests {
             ..Config::default()
         };
         let d = video_out_description(&cfg, "/dev/video10");
-        assert!(d.contains("width=1920,height=1080,framerate=60/1,colorimetry=bt601,interlace-mode=progressive"));
+        assert!(d.contains(
+            "width=1920,height=1080,framerate=60/1,colorimetry=bt601,interlace-mode=progressive"
+        ));
+        assert!(d.contains("capssetter replace=true"));
         assert!(d.contains("device=/dev/video10"));
         assert!(audio_out_description().contains("device=phonecam_mic_sink"));
     }

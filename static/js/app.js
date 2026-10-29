@@ -4,6 +4,7 @@
 // vídeo. Sem token (URL digitada), pede o PIN, e conecta ao completar 6 dígitos.
 
 import { CameraController, CameraError } from "./camera.js?v=3";
+import { clamp, cropRect, dragPan } from "./zoom.js?v=3";
 import { SignalChannel, SignalError } from "./signaling.js?v=3";
 import { PhoneCamSession } from "./webrtc.js?v=3";
 import { WakeLockManager } from "./wakelock.js?v=3";
@@ -16,6 +17,7 @@ import {
   setControlsEnabled,
   setMicUi,
   setPauseUi,
+  setPreviewTransform,
   setPinError,
   setStatus,
   setStep,
@@ -52,10 +54,13 @@ const state = {
   reconnectAttempts: 0,
   reconnectTimer: null,
   zoom: 1.0,
+  digitalZoom: false,
+  nativeZoomFailed: false,
   panX: 0,
   panY: 0,
   micOn: false,
   micBusy: false,
+  flipping: false,
   torchOn: false,
   statsVisible: false,
   statsTimer: null,
@@ -161,6 +166,9 @@ async function openSession(cred) {
   const facing = store.get("localStorage", FACING_KEY) === "user" ? "user" : "environment";
   await camera.start({ width: cfg.width, height: cfg.height, fps: cfg.fps, facing, videoEl: el.video });
   state.camera = camera;
+  state.digitalZoom = false;
+  state.nativeZoomFailed = false;
+  syncPreview();
 
   setStep(2);
   const session = new PhoneCamSession(signal, cfg);
@@ -231,16 +239,28 @@ function handleSignalClose(ev) {
   scheduleReconnect();
 }
 
-function handleKicked() {
+function handleKicked(reason) {
   state.userClosed = true;
   cancelReconnect();
   tearDown();
-  saveCred(null);
-  showEnded("Outro celular conectou", "O PC aceita um celular por vez. Toque para assumir de novo.", {
-    retryLabel: "Conectar este celular",
-    canEnterPin: false,
-  });
-  state.cred = loadCred() || state.cred;
+  if (reason === "server stopped") {
+    saveCred(null);
+    state.cred = null;
+    showEnded("Câmera desligada no PC", "O PC desligou a câmera do celular. Ligue de novo e escaneie o QR code.", {
+      retryLabel: "Ler o QR de novo",
+      canEnterPin: true,
+    });
+  } else if (reason === "disconnected by the PC") {
+    showEnded("Desconectado pelo PC", "O PC encerrou esta conexão. Toque para conectar de novo.", {
+      retryLabel: "Conectar de novo",
+      canEnterPin: false,
+    });
+  } else {
+    showEnded("Outro celular conectou", "O PC aceita um celular por vez. Toque para assumir de novo.", {
+      retryLabel: "Conectar este celular",
+      canEnterPin: false,
+    });
+  }
 }
 
 function handleIceState(pcState) {
@@ -248,7 +268,7 @@ function handleIceState(pcState) {
   if (pcState === "connected") {
     state.reconnectAttempts = 0;
     pinControls(state.paused);
-    setStatus(state.paused ? "Pausado" : "Ao vivo", state.paused ? "paused" : "live", state.serverMeta);
+    setStatus(state.paused ? "Pausado" : "Ao vivo", state.paused ? "paused" : "live", state.paused ? "" : state.serverMeta);
     if (navigator.vibrate) navigator.vibrate(40);
     toast("Conectado ao PC", { ms: 1800 });
   } else if (pcState === "disconnected") {
@@ -281,9 +301,12 @@ function tearDown() {
   state.micOn = false;
   state.torchOn = false;
   state.zoom = 1.0;
+  state.digitalZoom = false;
+  state.nativeZoomFailed = false;
   state.panX = 0;
   state.panY = 0;
   state.serverMeta = "";
+  setPreviewTransform({});
   setControlsEnabled(false);
   setTorchButtonVisible(false);
   wakeLock.release();
@@ -327,12 +350,28 @@ function scheduleReconnect() {
 
 // ================================================================ zoom
 
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
 function clampPan() {
-  const maxPan = Math.max(0, (state.zoom - 1) / state.zoom);
-  state.panX = clamp(state.panX, -maxPan, maxPan);
-  state.panY = clamp(state.panY, -maxPan, maxPan);
+  // pan normalizado: -1..1 percorre todo o espaço livre do recorte
+  state.panX = clamp(state.panX, -1, 1);
+  state.panY = clamp(state.panY, -1, 1);
+}
+
+/** A prévia local acompanha o que o PC recebe (zoom digital) e espelha a câmera frontal. */
+function syncPreview() {
+  const digital = state.digitalZoom && state.zoom > 1.001;
+  setPreviewTransform({
+    zoom: digital ? state.zoom : 1,
+    panX: digital ? state.panX : 0,
+    panY: digital ? state.panY : 0,
+    mirror: !!state.camera?.facingUser,
+  });
+}
+
+function applyDigitalZoom() {
+  state.digitalZoom = true;
+  if (state.zoom > 1.001) state.session?.startDigitalZoom(makeCropFn());
+  else state.session?.stopDigitalZoom().catch(() => {});
+  syncPreview();
 }
 
 function setZoom(z, { pulse = true } = {}) {
@@ -349,12 +388,21 @@ function setZoom(z, { pulse = true } = {}) {
   }
 
   if (!state.camera || !state.session) return;
-  if (state.camera.capabilities.zoom) {
-    state.camera.setNativeZoom(state.zoom).catch(() => {});
-  } else if (state.zoom > 1.001) {
-    state.session.startDigitalZoom(makeCropFn());
-  } else {
+  if (state.camera.capabilities.zoom && !state.nativeZoomFailed) {
+    const target = state.zoom;
+    state.digitalZoom = false;
     state.session.stopDigitalZoom().catch(() => {});
+    syncPreview();
+    state.camera.setNativeZoom(target).then((ok) => {
+      // O navegador recusou ou ignorou o zoom nativo: cai para o recorte digital, que sempre funciona.
+      if (!ok && state.camera && state.zoom === target) {
+        state.nativeZoomFailed = true;
+        state.camera.setNativeZoom(1).catch(() => {});
+        applyDigitalZoom();
+      }
+    });
+  } else {
+    applyDigitalZoom();
   }
 }
 
@@ -370,26 +418,7 @@ function makeCropFn() {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (!vw || !vh) return;
-    const targetAspect = W / H;
-    let sw, sh;
-    if (vw / vh > targetAspect) {
-      sh = vh;
-      sw = vh * targetAspect;
-    } else {
-      sw = vw;
-      sh = vw / targetAspect;
-    }
-    let sx = (vw - sw) / 2;
-    let sy = (vh - sh) / 2;
-    const z = state.zoom;
-    if (z > 1.001) {
-      const newSw = sw / z;
-      const newSh = sh / z;
-      sx = sx + (sw - newSw) / 2 + (state.panX * (sw - newSw)) / 2;
-      sy = sy + (sh - newSh) / 2 + (state.panY * (sh - newSh)) / 2;
-      sw = newSw;
-      sh = newSh;
-    }
+    const { sx, sy, sw, sh } = cropRect(vw, vh, W, H, state.zoom, state.panX, state.panY);
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
@@ -430,26 +459,40 @@ async function toggleTorch() {
 // ================================================================ câmera / pausa
 
 async function flipCamera() {
-  if (!state.camera) return;
+  const camera = state.camera;
+  if (!camera || state.flipping) return;
+  state.flipping = true;
   el.flipBtn.disabled = true;
   resetZoom();
+  const opts = { width: state.cfg.width, height: state.cfg.height, fps: state.cfg.fps, videoEl: el.video };
+  const previous = camera.facingUser ? "user" : "environment";
+  const next = camera.facingUser ? "environment" : "user";
   try {
-    const facing = state.camera.facingUser ? "environment" : "user";
-    const track = await state.camera.start({
-      width: state.cfg.width,
-      height: state.cfg.height,
-      fps: state.cfg.fps,
-      facing,
-      videoEl: el.video,
-    });
-    store.set("localStorage", FACING_KEY, facing);
+    let track;
+    try {
+      track = await camera.start({ ...opts, facing: next });
+    } catch (e) {
+      // A câmera antiga já foi liberada: volta para ela, senão a imagem congela.
+      track = await camera.start({ ...opts, facing: previous });
+      store.set("localStorage", FACING_KEY, previous);
+      state.nativeZoomFailed = false;
+      if (state.session) await state.session.replaceCamera(track);
+      syncPreview();
+      throw e;
+    }
+    store.set("localStorage", FACING_KEY, next);
+    state.nativeZoomFailed = false;
+    state.digitalZoom = false;
     if (state.session) await state.session.replaceCamera(track);
-    setTorchButtonVisible(state.camera.capabilities.torch);
+    syncPreview();
+    setTorchButtonVisible(camera.capabilities.torch);
     state.torchOn = false;
     setTorchUi(false);
+    toast(next === "user" ? "Câmera frontal" : "Câmera traseira", { ms: 1400 });
   } catch (e) {
     toast(e instanceof CameraError ? e.message : "Não consegui trocar de câmera.", { bad: true });
   } finally {
+    state.flipping = false;
     el.flipBtn.disabled = false;
   }
 }
@@ -524,7 +567,7 @@ el.video.addEventListener(
       gestures.pinchZoom = state.zoom;
       gestures.dragging = false;
       e.preventDefault();
-    } else if (e.touches.length === 1 && state.zoom > 1.001) {
+    } else if (e.touches.length === 1 && state.zoom > 1.001 && state.digitalZoom) {
       Object.assign(gestures, { sx: e.touches[0].clientX, sy: e.touches[0].clientY, spanX: state.panX, spanY: state.panY, dragging: true });
     }
     gestures.tapT = Date.now();
@@ -541,13 +584,14 @@ el.video.addEventListener(
       setZoom(gestures.pinchZoom * (touchDist(e.touches[0], e.touches[1]) / gestures.pinchDist));
       e.preventDefault();
     } else if (e.touches.length === 1 && gestures.dragging) {
-      const rect = el.video.getBoundingClientRect();
-      const scale = 2 * ((state.zoom - 1) / state.zoom);
-      state.panX = gestures.spanX - ((e.touches[0].clientX - gestures.sx) / rect.width) * scale;
-      state.panY = gestures.spanY - ((e.touches[0].clientY - gestures.sy) / rect.height) * scale;
-      clampPan();
-      if (state.session && !state.camera.capabilities.zoom && state.zoom > 1.001) {
-        state.session.startDigitalZoom(makeCropFn());
+      // Só o zoom digital tem o que arrastar (o nativo já enquadra o centro).
+      if (state.digitalZoom) {
+        const rect = el.video.getBoundingClientRect();
+        const mirrored = !!state.camera?.facingUser; // prévia espelhada inverte o sentido
+        state.panX = gestures.spanX + dragPan(e.touches[0].clientX - gestures.sx, rect.width, state.zoom, mirrored);
+        state.panY = gestures.spanY + dragPan(e.touches[0].clientY - gestures.sy, rect.height, state.zoom, false);
+        clampPan();
+        syncPreview();
       }
       e.preventDefault();
     }
@@ -624,7 +668,11 @@ el.pinInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitPin();
 });
 el.connectBtn.addEventListener("click", submitPin);
-el.endedBtn.addEventListener("click", () => (state.cred || loadCred() ? start(state.cred || loadCred()) : showConnect()));
+el.endedBtn.addEventListener("click", () => {
+  const cred = state.cred || loadCred();
+  if (cred) start(cred);
+  else showConnect();
+});
 el.endedPinBtn.addEventListener("click", () => showConnect());
 el.statusPill.addEventListener("click", toggleStats);
 el.flipBtn.addEventListener("click", () => { wakeControls(); flipCamera(); });
@@ -657,6 +705,14 @@ document.addEventListener("visibilitychange", () => {
     scheduleReconnect();
   }
 });
+
+// ================================================================ erros inesperados
+
+// Qualquer falha de script aparece na tela do celular (sem console, ninguém veria).
+window.addEventListener("error", (e) => toast("Erro: " + (e.message || "desconhecido"), { bad: true, ms: 6000 }));
+window.addEventListener("unhandledrejection", (e) =>
+  toast("Erro: " + ((e.reason && e.reason.message) || e.reason || "desconhecido"), { bad: true, ms: 6000 })
+);
 
 // ================================================================ início
 

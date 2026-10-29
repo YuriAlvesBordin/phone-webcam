@@ -11,6 +11,7 @@ pub mod error;
 pub mod hub;
 pub mod media;
 pub mod net;
+pub mod pipewire;
 pub mod protocol;
 pub mod qr;
 pub mod security;

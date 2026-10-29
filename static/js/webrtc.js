@@ -132,18 +132,32 @@ export class PhoneCamSession {
     const ctx = canvas.getContext("2d", { alpha: false });
     const cstream = canvas.captureStream(this.cfg.fps);
     const ctrack = cstream.getVideoTracks()[0];
+    // Um quadro desenhado por quadro da câmera (preciso e barato); rAF onde não existe.
+    const video = document.getElementById("video");
+    let stopped = false;
     let rafId = 0;
-    const draw = () => {
-      cropFn(ctx);
-      rafId = requestAnimationFrame(draw);
+    const schedule = () => {
+      if (stopped) return;
+      if (video && "requestVideoFrameCallback" in video) {
+        video.requestVideoFrameCallback(() => {
+          cropFn(ctx);
+          schedule();
+        });
+      } else {
+        rafId = requestAnimationFrame(() => {
+          cropFn(ctx);
+          schedule();
+        });
+      }
     };
-    rafId = requestAnimationFrame(draw);
+    schedule();
 
     this._canvasPipeline = {
       update: (fn) => {
         cropFn = fn;
       },
       stop: async () => {
+        stopped = true;
         cancelAnimationFrame(rafId);
         ctrack.stop();
         this._canvasPipeline = null;

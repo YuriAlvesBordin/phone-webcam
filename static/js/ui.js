@@ -1,5 +1,7 @@
 // Acesso ao DOM e estado visual. O resto do app não usa document.getElementById.
 
+import { previewShift } from "./zoom.js?v=3";
+
 const $ = (id) => document.getElementById(id);
 
 export const el = Object.freeze({
@@ -39,7 +41,7 @@ export function showScreen(name) {
   for (const [key, node] of Object.entries(el.screens)) node.classList.toggle("hidden", key !== name);
   if (name !== "live") {
     el.video.srcObject = null;
-    el.video.classList.remove("mirror");
+    el.video.style.transform = "";
     hideStats();
     hideToast();
   }
@@ -50,6 +52,7 @@ export function showConnect(message = "") {
   el.pinInput.value = "";
   updateConnectButton();
   showScreen("connect");
+  setTimeout(() => el.pinInput.focus(), 60); // o teclado numérico já abre pronto para o PIN
 }
 
 export function showConnecting(title = "Conectando…") {
@@ -113,32 +116,29 @@ export function hideToast() {
   el.toast.classList.add("hidden");
 }
 
-// ---------- controles que somem sozinhos ----------
-
-let awakeTimer = null;
-let pinned = false;
-
-/** Mantém os controles visíveis (pausado, reconectando). */
-export function pinControls(on) {
-  pinned = on;
-  wakeControls();
-}
+// ---------- controles ----------
+// Ficam sempre visíveis: controles que somem fazem o primeiro toque "não funcionar".
+// Tocar no vídeo alterna a vista limpa (sem nada por cima), e qualquer botão a desfaz.
 
 export function wakeControls() {
-  const live = el.screens.live;
-  live.classList.add("awake");
-  clearTimeout(awakeTimer);
-  if (!pinned) awakeTimer = setTimeout(() => live.classList.remove("awake"), 4500);
+  el.screens.live.classList.remove("clean");
+}
+
+/** Compatibilidade: antes fixava os controles; agora eles já ficam sempre visíveis. */
+export function pinControls(on) {
+  if (on) wakeControls();
 }
 
 export function toggleControls() {
-  const live = el.screens.live;
-  if (live.classList.contains("awake") && !pinned) {
-    clearTimeout(awakeTimer);
-    live.classList.remove("awake");
-  } else {
-    wakeControls();
-  }
+  el.screens.live.classList.toggle("clean");
+}
+
+/** Prévia espelhada/ampliada: o zoom digital só recorta o que vai ao PC, então a prévia imita. */
+export function setPreviewTransform({ zoom = 1, panX = 0, panY = 0, mirror = false }) {
+  const tx = previewShift(zoom, panX);
+  const ty = previewShift(zoom, panY);
+  const sx = mirror ? -zoom : zoom;
+  el.video.style.transform = zoom <= 1.001 ? (mirror ? "scaleX(-1)" : "") : `scale(${sx}, ${zoom}) translate(${tx}%, ${ty}%)`;
 }
 
 // ---------- botões ----------

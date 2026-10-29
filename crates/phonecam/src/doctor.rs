@@ -74,6 +74,14 @@ pub fn run() -> Result<(), String> {
         );
     }
 
+    if let Some(seen) = phonecam_core::pipewire::camera_visible() {
+        warn(
+            seen,
+            "PipeWire enxerga a webcam (Meet/Firefox usam o PipeWire)",
+            "ligue o serviço e rode: systemctl --user restart wireplumber (o PhoneCam faz isso sozinho ao ligar)",
+        );
+    }
+
     println!("\nMicrofone virtual:");
     warn(
         audio::server_available(),
