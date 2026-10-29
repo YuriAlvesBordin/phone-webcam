@@ -1,0 +1,32 @@
+[package]
+name = "phonecam-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+gstreamer = "0.24"
+gstreamer-webrtc = "0.24"
+gstreamer-sdp = "0.24"
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
+time = "0.3"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+include_dir = "0.7"
+if-addrs = "0.13"
+rand = "0.9"
+subtle = "2"
+futures-util = "0.3"
+tower-http = { version = "0.6", features = ["set-header"] }
+dirs = "6"
+toml = "0.8"
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
