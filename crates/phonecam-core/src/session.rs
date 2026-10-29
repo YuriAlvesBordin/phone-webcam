@@ -299,7 +299,10 @@ fn restrict_ice(webrtc: &gst::Element) {
     let Some(ice) = webrtc.property::<Option<gst::glib::Object>>("ice-agent") else {
         return;
     };
-    for (name, port) in [("min-rtp-port", ICE_PORT_MIN), ("max-rtp-port", ICE_PORT_MAX)] {
+    for (name, port) in [
+        ("min-rtp-port", ICE_PORT_MIN),
+        ("max-rtp-port", ICE_PORT_MAX),
+    ] {
         if ice.find_property(name).is_some() {
             ice.set_property(name, port);
         }

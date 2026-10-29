@@ -21,7 +21,10 @@ pub enum Phase {
 #[serde(default)]
 pub struct Status {
     pub phase: Phase,
+    /// URL limpa, para mostrar.
     pub url: String,
+    /// URL do QR, com a credencial no fragmento (igual a `url` se o QR não loga sozinho).
+    pub qr_url: String,
     pub pin: String,
     /// IP do celular conectado.
     pub client: String,

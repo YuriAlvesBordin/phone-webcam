@@ -1,135 +1,188 @@
-// Central DOM access and UI state helpers.
-// All element lookups live here so the rest of the app never touches
-// document.getElementById directly.
+// Acesso ao DOM e estado visual. O resto do app não usa document.getElementById.
 
 const $ = (id) => document.getElementById(id);
 
 export const el = Object.freeze({
-  pinOverlay: $("pinOverlay"),
+  screens: { connect: $("screenConnect"), connecting: $("screenConnecting"), live: $("screenLive"), ended: $("screenEnded") },
   pinInput: $("pinInput"),
   pinError: $("pinError"),
   connectBtn: $("connectBtn"),
-  topbar: $("topbar"),
-  stage: $("stage"),
+  connectingTitle: $("connectingTitle"),
+  steps: document.querySelectorAll("#steps li"),
   video: $("video"),
-  placeholder: $("placeholder"),
-  controls: $("controls"),
-  flipBtn: $("flipBtn"),
-  toggleBtn: $("toggleBtn"),
-  torchBtn: $("torchBtn"),
-  statusBar: $("statusBar"),
+  statusPill: $("statusPill"),
   liveDot: $("liveDot"),
-  fps: $("fps"),
-  rtt: $("rtt"),
-  orientHint: $("orientHint"),
-  zoomSlider: $("zoomSlider"),
-  zoomOutBtn: $("zoomOutBtn"),
-  zoomInBtn: $("zoomInBtn"),
-  zoomLabel: $("zoomLabel"),
-  wakeHint: $("wakeHint"),
-  micToggleBtn: $("micToggleBtn"),
-  audioStatus: $("audioStatus"),
-  zoomIndicator: $("zoomIndicator"),
-  reconnectBar: $("reconnectBar"),
+  statusText: $("statusText"),
+  statusMeta: $("statusMeta"),
   statsPanel: $("statsPanel"),
+  toast: $("toast"),
+  zoomIndicator: $("zoomIndicator"),
+  wakeHint: $("wakeHint"),
+  controls: $("controls"),
+  zoomChips: document.querySelectorAll("#zoomChips button"),
+  flipBtn: $("flipBtn"),
+  micBtn: $("micBtn"),
+  micLabel: $("micLabel"),
+  pauseBtn: $("pauseBtn"),
+  pauseIcon: $("pauseIcon"),
+  pauseLabel: $("pauseLabel"),
+  torchBtn: $("torchBtn"),
+  endedTitle: $("endedTitle"),
+  endedMsg: $("endedMsg"),
+  endedBtn: $("endedBtn"),
+  endedPinBtn: $("endedPinBtn"),
 });
 
-export function setStatus(msg, cls = "") {
-  el.statusBar.textContent = msg;
-  el.statusBar.className = "status-bar " + cls;
+// ---------- telas ----------
+
+export function showScreen(name) {
+  for (const [key, node] of Object.entries(el.screens)) node.classList.toggle("hidden", key !== name);
+  if (name !== "live") {
+    el.video.srcObject = null;
+    el.video.classList.remove("mirror");
+    hideStats();
+    hideToast();
+  }
 }
+
+export function showConnect(message = "") {
+  setPinError(message);
+  el.pinInput.value = "";
+  updateConnectButton();
+  showScreen("connect");
+}
+
+export function showConnecting(title = "Conectando…") {
+  el.connectingTitle.textContent = title;
+  setStep(0);
+  showScreen("connecting");
+}
+
+/** Etapa atual (0..2): as anteriores ficam marcadas como feitas. */
+export function setStep(index) {
+  el.steps.forEach((li, i) => {
+    li.classList.toggle("done", i < index);
+    li.classList.toggle("active", i === index);
+  });
+}
+
+export function showEnded(title, message, { retryLabel = "Tentar de novo", canEnterPin = true } = {}) {
+  el.endedTitle.textContent = title;
+  el.endedMsg.textContent = message;
+  el.endedBtn.textContent = retryLabel;
+  el.endedPinBtn.classList.toggle("hidden", !canEnterPin);
+  showScreen("ended");
+}
+
+// ---------- PIN ----------
 
 export function setPinError(msg) {
   el.pinError.textContent = msg || "";
+  if (msg) {
+    el.pinInput.classList.remove("bad");
+    void el.pinInput.offsetWidth; // reinicia a animação
+    el.pinInput.classList.add("bad");
+  } else {
+    el.pinInput.classList.remove("bad");
+  }
 }
 
-export function showMainScreen() {
-  el.pinOverlay.classList.add("hidden");
-  el.topbar.classList.remove("hidden");
-  el.stage.classList.remove("hidden");
-  el.controls.classList.remove("hidden");
-  el.statusBar.classList.remove("hidden");
+export function updateConnectButton() {
+  el.connectBtn.disabled = !/^\d{6}$/.test(el.pinInput.value);
 }
 
-export function showPinScreen(message = "") {
-  el.pinError.textContent = message;
-  el.pinOverlay.classList.remove("hidden");
-  el.topbar.classList.add("hidden");
-  el.stage.classList.add("hidden");
-  el.controls.classList.add("hidden");
-  el.statusBar.classList.add("hidden");
-  el.connectBtn.disabled = false;
-  el.connectBtn.textContent = "Conectar";
-  el.video.srcObject = null;
-  el.video.classList.remove("mirror");
-  el.liveDot.classList.remove("live");
-  hideReconnect();
-  hideStats();
+// ---------- barra de estado ----------
+
+/** kind: "wait" | "live" | "paused" | "bad" */
+export function setStatus(text, kind = "wait", meta = "") {
+  el.statusText.textContent = text;
+  el.statusMeta.textContent = meta;
+  el.liveDot.className = "dot" + (kind === "wait" ? "" : " " + kind);
 }
+
+let toastTimer = null;
+export function toast(message, { bad = false, ms = 3000 } = {}) {
+  el.toast.textContent = message;
+  el.toast.className = "toast" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  if (ms > 0) toastTimer = setTimeout(hideToast, ms);
+}
+
+export function hideToast() {
+  clearTimeout(toastTimer);
+  el.toast.classList.add("hidden");
+}
+
+// ---------- controles que somem sozinhos ----------
+
+let awakeTimer = null;
+let pinned = false;
+
+/** Mantém os controles visíveis (pausado, reconectando). */
+export function pinControls(on) {
+  pinned = on;
+  wakeControls();
+}
+
+export function wakeControls() {
+  const live = el.screens.live;
+  live.classList.add("awake");
+  clearTimeout(awakeTimer);
+  if (!pinned) awakeTimer = setTimeout(() => live.classList.remove("awake"), 4500);
+}
+
+export function toggleControls() {
+  const live = el.screens.live;
+  if (live.classList.contains("awake") && !pinned) {
+    clearTimeout(awakeTimer);
+    live.classList.remove("awake");
+  } else {
+    wakeControls();
+  }
+}
+
+// ---------- botões ----------
 
 export function setControlsEnabled(enabled) {
-  for (const btn of [el.flipBtn, el.toggleBtn, el.zoomOutBtn, el.zoomInBtn]) {
-    btn.disabled = !enabled;
-  }
-  el.zoomSlider.disabled = !enabled;
-  document.querySelectorAll(".zoom-quick-btn").forEach((b) => (b.disabled = !enabled));
+  for (const b of [el.flipBtn, el.pauseBtn, ...el.zoomChips]) b.disabled = !enabled;
+  if (!enabled) el.micBtn.disabled = true;
 }
 
 export function setTorchButtonVisible(visible) {
   el.torchBtn.classList.toggle("hidden", !visible);
-  if (!visible) el.torchBtn.disabled = true;
 }
 
-const PLACEHOLDER_DEFAULT = `<div class="icon" aria-hidden="true">📷</div><div>Aguardando câmera…</div>`;
-
-export function showPlaceholder(html = PLACEHOLDER_DEFAULT) {
-  el.placeholder.innerHTML = html;
-  el.placeholder.style.display = "flex";
+export function setTorchUi(on) {
+  el.torchBtn.classList.toggle("alert", on);
 }
 
-export function hidePlaceholder() {
-  el.placeholder.style.display = "none";
+export function setMicUi({ on, available = true, busy = false }) {
+  el.micBtn.disabled = !available || busy;
+  el.micBtn.classList.toggle("on", on);
+  el.micLabel.textContent = !available ? "Sem áudio" : on ? "Mic" : "Mudo";
 }
 
-export function showReconnect(text) {
-  el.reconnectBar.textContent = text;
-  el.reconnectBar.classList.remove("hidden");
-}
-
-export function hideReconnect() {
-  el.reconnectBar.classList.add("hidden");
+export function setPauseUi(paused) {
+  el.pauseIcon.setAttribute("href", paused ? "#i-play" : "#i-pause");
+  el.pauseLabel.textContent = paused ? "Retomar" : "Pausar";
+  el.pauseBtn.classList.toggle("alert", paused);
 }
 
 // ---------- zoom ----------
 
+let zoomTimer = null;
 export function updateZoomUi(zoom) {
-  el.zoomSlider.value = String(zoom);
-  el.zoomLabel.textContent = zoom.toFixed(1) + "×";
+  el.zoomChips.forEach((b) => b.classList.toggle("active", Math.abs(parseFloat(b.dataset.zoom) - zoom) < 0.05));
   el.zoomIndicator.textContent = zoom.toFixed(1) + "×";
-
-  document.querySelectorAll(".zoom-quick-btn").forEach((btn) => {
-    const btnZoom = parseFloat(btn.dataset.zoom);
-    btn.classList.toggle("active", Math.abs(btnZoom - zoom) < 0.05);
-  });
-
-  if (zoom > 1.001) {
-    el.zoomIndicator.classList.remove("hidden");
-    el.zoomIndicator.classList.add("show");
-  } else {
-    el.zoomIndicator.classList.remove("show");
-  }
 }
 
 export function pulseZoomIndicator() {
-  el.zoomIndicator.classList.add("changed");
-  setTimeout(() => el.zoomIndicator.classList.remove("changed"), 300);
+  el.zoomIndicator.classList.add("show");
+  clearTimeout(zoomTimer);
+  zoomTimer = setTimeout(() => el.zoomIndicator.classList.remove("show"), 900);
 }
 
-export function resetZoomUi() {
-  updateZoomUi(1.0);
-}
-
-// ---------- stats overlay ----------
+// ---------- estatísticas ----------
 
 export function renderStats(text) {
   el.statsPanel.textContent = text;

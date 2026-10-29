@@ -2,93 +2,119 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f172a">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0f14">
+<meta name="color-scheme" content="dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>PhoneCam</title>
-<link rel="stylesheet" href="/css/styles.css">
-<script type="module" src="/js/app.js?v=2"></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/css/styles.css?v=3">
+<script type="module" src="/js/app.js?v=3"></script>
 </head>
 <body>
 
-<!-- PIN screen -->
-<div class="pin-overlay" id="pinOverlay">
-  <div class="pin-card">
-    <div class="pin-logo" aria-hidden="true">📱</div>
-    <h2>PhoneCam</h2>
-    <p class="sub">Digite o PIN de 6 dígitos exibido no terminal do PC para conectar a câmera.</p>
-    <div class="pin-input-wrap">
-      <input
-        type="tel"
-        id="pinInput"
-        class="pin-input"
-        inputmode="numeric"
-        maxlength="6"
-        placeholder="••••••"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-        aria-label="PIN de 6 dígitos"
-      >
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-flip" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.2L3 16M3 21v-5h5"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+  <symbol id="i-torch" viewBox="0 0 24 24"><path d="M7 3h10l-2 6H9zM9 9v3l-1 2v7h8v-7l-1-2V9"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="3"/><path d="M15.5 10.5 21 7.5v9l-5.5-3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></symbol>
+</svg>
+
+<!-- 1. Conectar: só aparece quando o QR não foi usado -->
+<section class="screen" id="screenConnect" aria-labelledby="connectTitle">
+  <div class="card">
+    <div class="logo" aria-hidden="true"><svg class="ico"><use href="#i-cam"/></svg></div>
+    <h1 id="connectTitle">PhoneCam</h1>
+    <p class="sub">Use o celular como webcam do PC.</p>
+
+    <div class="qr-tip">
+      <span class="qr-tip-badge">Mais fácil</span>
+      Escaneie o <b>QR code</b> da tela do PC com a câmera do celular. Ele conecta sozinho.
     </div>
-    <button class="btn-primary" id="connectBtn">Conectar</button>
-    <p class="pin-error" id="pinError" role="alert"></p>
-  </div>
-</div>
 
-<!-- Main screen -->
-<header class="topbar hidden" id="topbar">
-  <div class="brand"><span class="dot" id="liveDot" aria-hidden="true"></span>PhoneCam</div>
-  <div class="meta">
-    <span id="fps" aria-live="off">- fps</span>
-    <span id="rtt" aria-live="off"></span>
-  </div>
-</header>
+    <div class="divider"><span>ou digite o PIN do PC</span></div>
 
-<div class="wake-hint hidden" id="wakeHint" role="button" tabindex="0">
-  💡 Tela livre para apagar - toque para reativar
-</div>
-
-<main class="stage hidden" id="stage">
-  <video id="video" autoplay playsinline muted></video>
-  <div class="placeholder" id="placeholder">
-    <div class="icon" aria-hidden="true">📷</div>
-    <div>Aguardando câmera…</div>
+    <input type="tel" id="pinInput" class="pin-input" inputmode="numeric" pattern="[0-9]*"
+           maxlength="6" placeholder="000000" autocomplete="one-time-code"
+           autocapitalize="off" spellcheck="false" aria-label="PIN de 6 dígitos">
+    <p class="error" id="pinError" role="alert"></p>
+    <button class="btn-primary" id="connectBtn" disabled>Conectar</button>
   </div>
-  <div class="reconnect-bar hidden" id="reconnectBar" role="status">Reconectando…</div>
-  <div class="stats-panel hidden" id="statsPanel" aria-hidden="true"></div>
-  <div class="orient-hint" id="orientHint">📱 Gire para a horizontal - qualidade melhora</div>
-  <div class="zoom-indicator hidden" id="zoomIndicator">1.0×</div>
+</section>
+
+<!-- 2. Conectando -->
+<section class="screen hidden" id="screenConnecting" aria-live="polite">
+  <div class="card center">
+    <div class="spinner" aria-hidden="true"></div>
+    <h2 id="connectingTitle">Conectando…</h2>
+    <ol class="steps" id="steps">
+      <li data-step="0">Falando com o PC</li>
+      <li data-step="1">Abrindo a câmera</li>
+      <li data-step="2">Iniciando o vídeo</li>
+    </ol>
+    <p class="hint">Se o navegador pedir, toque em <b>Permitir</b> para a câmera e o microfone.</p>
+  </div>
+</section>
+
+<!-- 3. Ao vivo -->
+<main class="screen live hidden" id="screenLive">
+  <video id="video" autoplay playsinline muted disablepictureinpicture controlslist="nodownload noremoteplayback"></video>
+
+  <div class="overlay top">
+    <button class="pill" id="statusPill" aria-label="Estado da conexão. Toque para ver estatísticas">
+      <span class="dot" id="liveDot" aria-hidden="true"></span>
+      <span id="statusText">Conectando…</span>
+      <span class="meta" id="statusMeta"></span>
+    </button>
+    <div class="stats-panel hidden" id="statsPanel" aria-hidden="true"></div>
+  </div>
+
+  <div class="toast hidden" id="toast" role="status"></div>
+  <div class="zoom-indicator" id="zoomIndicator">1.0×</div>
+  <div class="wake-hint hidden" id="wakeHint" role="button" tabindex="0">Toque aqui para manter a tela ligada</div>
+
+  <div class="overlay bottom" id="controls">
+    <div class="zoom-chips" id="zoomChips" role="group" aria-label="Zoom">
+      <button data-zoom="1" disabled>1×</button>
+      <button data-zoom="2" disabled>2×</button>
+      <button data-zoom="3" disabled>3×</button>
+      <button data-zoom="4" disabled>4×</button>
+    </div>
+    <div class="dock">
+      <button class="round" id="flipBtn" disabled aria-label="Trocar câmera">
+        <svg class="ico"><use href="#i-flip"/></svg><span>Virar</span>
+      </button>
+      <button class="round" id="micBtn" disabled aria-label="Microfone">
+        <svg class="ico"><use href="#i-mic"/></svg><i class="slash" aria-hidden="true"></i><span id="micLabel">Mudo</span>
+      </button>
+      <button class="round" id="pauseBtn" disabled aria-label="Pausar">
+        <svg class="ico"><use id="pauseIcon" href="#i-pause"/></svg><span id="pauseLabel">Pausar</span>
+      </button>
+      <button class="round hidden" id="torchBtn" aria-label="Lanterna">
+        <svg class="ico"><use href="#i-torch"/></svg><span>Luz</span>
+      </button>
+    </div>
+  </div>
 </main>
 
-<div class="controls hidden" id="controls">
-  <button class="btn" id="flipBtn" disabled aria-label="Trocar câmera">🔄 Trocar câmera</button>
-  <button class="btn danger" id="toggleBtn" disabled aria-label="Pausar transmissão">⏸ Pausar</button>
-  <button class="btn hidden" id="torchBtn" aria-label="Ligar lanterna">🔦 Lanterna</button>
-
-  <div class="zoom-panel">
-    <button class="zoom-btn" id="zoomOutBtn" disabled aria-label="Diminuir zoom">−</button>
-    <input type="range" class="zoom-slider" id="zoomSlider"
-           min="1" max="4" step="0.1" value="1" disabled aria-label="Zoom">
-    <button class="zoom-btn" id="zoomInBtn" disabled aria-label="Aumentar zoom">+</button>
-    <div class="zoom-label" id="zoomLabel">1.0×</div>
+<!-- 4. Encerrado / erro -->
+<section class="screen hidden" id="screenEnded" aria-live="assertive">
+  <div class="card center">
+    <div class="logo warn" aria-hidden="true"><svg class="ico"><use href="#i-alert"/></svg></div>
+    <h2 id="endedTitle">Desconectado</h2>
+    <p class="sub" id="endedMsg"></p>
+    <button class="btn-primary" id="endedBtn">Tentar de novo</button>
+    <button class="btn-link" id="endedPinBtn">Digitar o PIN</button>
   </div>
-
-  <div class="zoom-quick">
-    <button class="zoom-quick-btn" data-zoom="1" disabled>1×</button>
-    <button class="zoom-quick-btn" data-zoom="2" disabled>2×</button>
-    <button class="zoom-quick-btn" data-zoom="3" disabled>3×</button>
-    <button class="zoom-quick-btn" data-zoom="4" disabled>4×</button>
-  </div>
-
-  <div class="audio-panel" id="audioPanel">
-    <button class="btn audio-btn" id="micToggleBtn" disabled aria-label="Ativar microfone">🎤 Microfone OFF</button>
-    <span class="audio-status" id="audioStatus">Áudio desativado</span>
-  </div>
-</div>
-
-<div class="status-bar hidden" id="statusBar" role="status">Conectando…</div>
+</section>
 
 </body>
 </html>

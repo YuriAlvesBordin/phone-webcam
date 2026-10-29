@@ -19,10 +19,14 @@ pub const VIDEO_CHANNEL: &str = "phonecam-video";
 pub const AUDIO_CHANNEL: &str = "phonecam-audio";
 
 /// Descrição do pipeline de vídeo de saída (separada para ser testável).
+///
+/// `colorimetry` explícito é obrigatório: sem ele o `intervideosrc` fixa uma colorimetria que o
+/// v4l2sink recusa (`not-negotiated`) e a webcam virtual nunca recebe quadros.
 pub fn video_out_description(cfg: &Config, device: &str) -> String {
     format!(
         "intervideosrc channel={VIDEO_CHANNEL} ! videoconvert ! videoscale add-borders=true ! \
-         videorate ! video/x-raw,format=YUY2,width={w},height={h},framerate={fps}/1 ! \
+         videorate ! video/x-raw,format=YUY2,width={w},height={h},framerate={fps}/1,\
+         colorimetry=bt601,interlace-mode=progressive,pixel-aspect-ratio=1/1 ! \
          v4l2sink device={device} sync=false",
         w = cfg.width,
         h = cfg.height,
@@ -160,7 +164,7 @@ mod tests {
             ..Config::default()
         };
         let d = video_out_description(&cfg, "/dev/video10");
-        assert!(d.contains("width=1920,height=1080,framerate=60/1"));
+        assert!(d.contains("width=1920,height=1080,framerate=60/1,colorimetry=bt601,interlace-mode=progressive"));
         assert!(d.contains("device=/dev/video10"));
         assert!(audio_out_description().contains("device=phonecam_mic_sink"));
     }

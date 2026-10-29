@@ -12,7 +12,7 @@ use crate::error::Error;
 use crate::hub::Hub;
 use crate::media::Outputs;
 use crate::net::{connection_url, local_ips};
-use crate::security::generate_pin;
+use crate::security::{generate_pin, generate_token};
 use crate::server::{router, App};
 use crate::status::{Phase, Status};
 use crate::{tls, vcam};
@@ -79,7 +79,11 @@ impl Controller {
             None
         };
 
-        let device = vcam::find(cfg.video_device.as_deref());
+        let device = if cfg.video {
+            vcam::find(cfg.video_device.as_deref())
+        } else {
+            None
+        };
         match &device {
             None if !vcam::module_loaded() => warnings.push(
                 "webcam virtual indisponível: módulo v4l2loopback não carregado \
@@ -110,12 +114,14 @@ impl Controller {
         };
 
         let pin = cfg.pin.clone().unwrap_or_else(generate_pin);
-        let url = connection_url(
-            cfg.https,
-            ips.first().copied(),
-            cfg.port,
-            cfg.qr_pin.then_some(pin.as_str()),
-        );
+        let token = generate_token();
+        let host = ips.first().copied();
+        let url = connection_url(cfg.https, host, cfg.port, None);
+        let qr_url = if cfg.qr_login {
+            connection_url(cfg.https, host, cfg.port, Some(&token))
+        } else {
+            url.clone()
+        };
 
         let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port)
             .parse()
@@ -128,6 +134,7 @@ impl Controller {
             cfg.clone(),
             self.hub.clone(),
             pin.clone(),
+            token,
             url.clone(),
             mic.is_some(),
         );
@@ -160,6 +167,7 @@ impl Controller {
             *s = Status {
                 phase: Phase::Waiting,
                 url,
+                qr_url,
                 pin,
                 width: cfg.width,
                 height: cfg.height,
@@ -206,18 +214,17 @@ impl Controller {
     pub async fn regenerate_pin(&self) -> Option<String> {
         let slot = self.running.lock().await;
         let running = slot.as_ref()?;
-        let pin = generate_pin();
-        running.app.set_pin(pin.clone());
-        let qr_pin = self.cfg.qr_pin;
-        let url = connection_url(
-            self.cfg.https,
-            local_ips().first().copied(),
-            self.cfg.port,
-            qr_pin.then_some(pin.as_str()),
-        );
+        let (pin, token) = (generate_pin(), generate_token());
+        running.app.set_creds(pin.clone(), token.clone());
+        let host = local_ips().first().copied();
+        let qr_url = if self.cfg.qr_login {
+            connection_url(self.cfg.https, host, self.cfg.port, Some(&token))
+        } else {
+            connection_url(self.cfg.https, host, self.cfg.port, None)
+        };
         self.hub.update(|s| {
             s.pin = pin.clone();
-            s.url = url;
+            s.qr_url = qr_url;
         });
         Some(pin)
     }

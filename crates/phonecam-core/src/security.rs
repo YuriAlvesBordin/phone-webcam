@@ -15,6 +15,13 @@ pub fn generate_pin() -> String {
     format!("{n:0width$}", width = PIN_LENGTH)
 }
 
+/// Token do QR: 128 bits aleatórios em hexadecimal. Vai no fragmento da URL (`#k=`), que o
+/// navegador nunca envia ao servidor; só quem viu o QR na tela do PC o tem.
+pub fn generate_token() -> String {
+    let n: u128 = rand::rng().random();
+    format!("{n:032x}")
+}
+
 /// Comparação em tempo constante.
 pub fn pin_matches(guess: &str, actual: &str) -> bool {
     guess.len() == actual.len() && bool::from(guess.as_bytes().ct_eq(actual.as_bytes()))
@@ -115,6 +122,14 @@ mod tests {
             assert!(p.bytes().all(|b| b.is_ascii_digit()));
             assert!(!p.starts_with('0'));
         }
+    }
+
+    #[test]
+    fn token_tem_128_bits_e_nao_repete() {
+        let (a, b) = (generate_token(), generate_token());
+        assert_eq!(a.len(), 32);
+        assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
     }
 
     #[test]

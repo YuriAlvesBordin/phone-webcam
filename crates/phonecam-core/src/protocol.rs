@@ -28,6 +28,9 @@ pub enum ClientMsg {
     Auth {
         #[serde(default)]
         pin: String,
+        /// Credencial do QR (alternativa ao PIN).
+        #[serde(default)]
+        token: String,
     },
     Offer {
         sdp: String,
@@ -100,7 +103,15 @@ mod tests {
         assert_eq!(
             parse(r#"{"type":"auth","pin":"123456"}"#),
             Some(ClientMsg::Auth {
-                pin: "123456".into()
+                pin: "123456".into(),
+                token: String::new()
+            })
+        );
+        assert_eq!(
+            parse(r#"{"type":"auth","token":"abc"}"#),
+            Some(ClientMsg::Auth {
+                pin: String::new(),
+                token: "abc".into()
             })
         );
         assert_eq!(

@@ -1,5 +1,23 @@
 // Camera capture: getUserMedia + native zoom/torch capability handling.
 
+/** Erro de câmera com mensagem em português para quem está no celular. */
+export class CameraError extends Error {
+  constructor(cause) {
+    const name = cause && cause.name;
+    const msg =
+      name === "NotAllowedError" || name === "SecurityError"
+        ? "A câmera está bloqueada. Permita o acesso à câmera nas configurações do navegador e tente de novo."
+        : name === "NotFoundError" || name === "OverconstrainedError"
+          ? "Não encontrei uma câmera neste aparelho."
+          : name === "NotReadableError" || name === "AbortError"
+            ? "A câmera está em uso por outro app. Feche-o e tente de novo."
+            : "Não consegui abrir a câmera: " + ((cause && cause.message) || cause);
+    super(msg);
+    this.name = "CameraError";
+    this.cause = cause;
+  }
+}
+
 export class CameraController {
   constructor() {
     this.stream = null;
@@ -30,7 +48,11 @@ export class CameraController {
       audio: false,
     };
 
-    this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      throw new CameraError(e);
+    }
     this.track = this.stream.getVideoTracks()[0];
     this.facing = facing;
     this._detectCapabilities();

@@ -40,8 +40,10 @@ pub struct Config {
     pub pin: Option<String>,
     pub https: bool,
     pub audio: bool,
-    /// Coloca o PIN no QR (mais cômodo, menos seguro).
-    pub qr_pin: bool,
+    /// Liga a webcam virtual (v4l2loopback). Desligada, só o microfone funciona.
+    pub video: bool,
+    /// O QR já leva a credencial: escanear conecta sem digitar o PIN.
+    pub qr_login: bool,
     /// Dispositivo v4l2loopback; `None` detecta sozinho.
     pub video_device: Option<String>,
 }
@@ -58,7 +60,8 @@ impl Default for Config {
             pin: None,
             https: true,
             audio: true,
-            qr_pin: false,
+            video: true,
+            qr_login: true,
             video_device: None,
         }
     }

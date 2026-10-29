@@ -63,7 +63,10 @@ pub fn find(wanted: Option<&str>) -> Option<Device> {
 pub fn exclusive_caps_ok() -> Option<bool> {
     let text =
         std::fs::read_to_string("/sys/module/v4l2loopback/parameters/exclusive_caps").ok()?;
-    Some(matches!(text.trim().split(',').next(), Some("Y" | "y" | "1")))
+    Some(matches!(
+        text.trim().split(',').next(),
+        Some("Y" | "y" | "1")
+    ))
 }
 
 /// O módulo está carregado?

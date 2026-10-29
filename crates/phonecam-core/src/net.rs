@@ -37,13 +37,14 @@ pub fn local_ips() -> Vec<IpAddr> {
 }
 
 /// URL de conexão mostrada no QR.
-pub fn connection_url(https: bool, host: Option<IpAddr>, port: u16, pin: Option<&str>) -> String {
+/// `token` vai no fragmento (`#k=`): o navegador não o envia ao servidor nem em Referer.
+pub fn connection_url(https: bool, host: Option<IpAddr>, port: u16, token: Option<&str>) -> String {
     let scheme = if https { "https" } else { "http" };
     let host = host.map_or_else(|| "localhost".to_string(), |h| h.to_string());
     let mut url = format!("{scheme}://{host}:{port}/");
-    if let Some(pin) = pin {
-        url.push_str("?pin=");
-        url.push_str(pin);
+    if let Some(token) = token {
+        url.push_str("#k=");
+        url.push_str(token);
     }
     url
 }
@@ -53,15 +54,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn url_com_e_sem_pin() {
+    fn url_com_e_sem_token() {
         let ip: IpAddr = "192.168.3.13".parse().unwrap();
         assert_eq!(
             connection_url(true, Some(ip), 8765, None),
             "https://192.168.3.13:8765/"
         );
         assert_eq!(
-            connection_url(false, None, 80, Some("123456")),
-            "http://localhost:80/?pin=123456"
+            connection_url(false, None, 80, Some("abc123")),
+            "http://localhost:80/#k=abc123"
         );
     }
 }

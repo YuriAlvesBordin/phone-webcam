@@ -21,6 +21,11 @@ use crate::config::{
 use crate::hub::Hub;
 use crate::protocol::{self, close, ClientMsg, IceCandidate, MediaCfg, ServerMsg, StatsMsg};
 use crate::security::{origin_allowed, pin_matches, RateLimiter};
+
+struct Creds {
+    pin: String,
+    token: String,
+}
 use crate::session::{Session, SessionEvent};
 use crate::status::Phase;
 
@@ -33,7 +38,7 @@ const CSP: &str = "default-src 'self'; img-src 'self' data: blob:; style-src 'se
 pub struct App {
     pub cfg: Config,
     pub hub: Hub,
-    pin: RwLock<String>,
+    creds: RwLock<Creds>,
     url: String,
     audio: bool,
     limiter: Mutex<RateLimiter>,
@@ -44,7 +49,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cfg: Config, hub: Hub, pin: String, url: String, audio: bool) -> Arc<Self> {
+    pub fn new(
+        cfg: Config,
+        hub: Hub,
+        pin: String,
+        token: String,
+        url: String,
+        audio: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             limiter: Mutex::new(RateLimiter::new(
                 AUTH_MAX_FAILURES,
@@ -52,7 +64,7 @@ impl App {
             )),
             cfg,
             hub,
-            pin: RwLock::new(pin),
+            creds: RwLock::new(Creds { pin, token }),
             url,
             audio,
             current: Mutex::new(None),
@@ -61,13 +73,21 @@ impl App {
         })
     }
 
-    pub fn pin(&self) -> String {
-        self.pin.read().map(|p| p.clone()).unwrap_or_default()
+    /// PIN e token válidos agora.
+    pub fn creds_match(&self, pin: &str, token: &str) -> bool {
+        let Ok(c) = self.creds.read() else {
+            return false;
+        };
+        // Sem curto-circuito entre os dois: o tempo não revela qual deles errou.
+        let by_pin = !pin.is_empty() && pin_matches(pin, &c.pin);
+        let by_token = !token.is_empty() && pin_matches(token, &c.token);
+        by_pin | by_token
     }
 
-    pub fn set_pin(&self, pin: String) {
-        if let Ok(mut p) = self.pin.write() {
-            *p = pin;
+    /// Troca as credenciais (novo PIN invalida o QR antigo).
+    pub fn set_creds(&self, pin: String, token: String) {
+        if let Ok(mut c) = self.creds.write() {
+            *c = Creds { pin, token };
         }
     }
 
@@ -128,6 +148,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/qrcode.svg", get(qr_svg))
         .route("/qrcode", get(qr_text))
         .route("/signal", get(signal))
+        .route("/manifest.webmanifest", get(asset_manifest))
+        .route("/icon.svg", get(asset_icon))
         .route("/js/{*path}", get(asset_js))
         .route("/css/{*path}", get(asset_css))
         .layer(hdr("content-security-policy", CSP))
@@ -145,6 +167,7 @@ fn content_type(path: &str) -> &'static str {
         "svg" => "image/svg+xml",
         "png" => "image/png",
         "json" => "application/json",
+        "webmanifest" => "application/manifest+json",
         _ => "application/octet-stream",
     }
 }
@@ -166,6 +189,14 @@ fn static_file(path: &str) -> Response {
 
 async fn index() -> Response {
     static_file("index.html")
+}
+
+async fn asset_manifest() -> Response {
+    static_file("manifest.webmanifest")
+}
+
+async fn asset_icon() -> Response {
+    static_file("icon.svg")
 }
 
 async fn asset_js(Path(p): Path<String>) -> Response {
@@ -283,7 +314,7 @@ async fn authenticate(app: &App, ws: &mut WebSocket, ip: &str) -> Auth {
     };
     let ok = matches!(
         protocol::parse(&raw),
-        Some(ClientMsg::Auth { pin }) if pin_matches(&pin, &app.pin())
+        Some(ClientMsg::Auth { pin, token }) if app.creds_match(&pin, &token)
     );
     let mut limiter = app.limiter.lock().expect("limiter");
     if ok {
@@ -467,6 +498,8 @@ mod tests {
             "js/app.js",
             "js/signaling.js",
             "css/styles.css",
+            "icon.svg",
+            "manifest.webmanifest",
         ] {
             assert!(STATIC_DIR.get_file(f).is_some(), "falta {f}");
         }

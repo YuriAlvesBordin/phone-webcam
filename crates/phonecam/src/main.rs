@@ -43,14 +43,17 @@ struct Overrides {
     /// PIN fixo (padrão: aleatório a cada início)
     #[arg(long)]
     pin: Option<String>,
-    /// Coloca o PIN na URL do QR (mais cômodo, menos seguro)
+    /// O QR não conecta sozinho: exige digitar o PIN no celular
     #[arg(long)]
-    qr_pin: bool,
+    no_qr_login: bool,
     /// HTTP puro (só localhost; celulares exigem HTTPS)
     #[arg(long)]
     no_https: bool,
     #[arg(long)]
     no_audio: bool,
+    /// Sem webcam virtual (só o microfone)
+    #[arg(long)]
+    no_video: bool,
     /// Dispositivo v4l2loopback (padrão: detecta)
     #[arg(long)]
     device: Option<String>,
@@ -71,9 +74,10 @@ impl Overrides {
         if self.device.is_some() {
             cfg.video_device = self.device;
         }
-        cfg.qr_pin |= self.qr_pin;
+        cfg.qr_login &= !self.no_qr_login;
         cfg.https &= !self.no_https;
         cfg.audio &= !self.no_audio;
+        cfg.video &= !self.no_video;
         cfg
     }
 }
@@ -152,9 +156,10 @@ impl Overrides {
             fps: None,
             bitrate: None,
             pin: None,
-            qr_pin: false,
+            no_qr_login: false,
             no_https: false,
             no_audio: false,
+            no_video: false,
             device: None,
         }
     }
@@ -209,12 +214,15 @@ fn print_banner(cfg: &Config, st: &phonecam_core::Status) {
         }
     );
     println!("  PIN       : {}\n", st.pin);
-    if let Some(qr) = phonecam_core::qr::terminal(&st.url) {
+    if let Some(qr) = phonecam_core::qr::terminal(&st.qr_url) {
         for line in qr.lines() {
             println!("      {line}");
         }
     }
-    println!("\n  URL: {}", st.url);
+    println!(
+        "\n  Escaneie o QR: conecta sozinho. Ou abra {} e digite o PIN.",
+        st.url
+    );
     if cfg.https {
         println!("\n  O navegador vai avisar sobre o certificado (é autoassinado, é normal).");
     }

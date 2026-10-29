@@ -29,7 +29,7 @@ export class SignalChannel {
       try {
         this.ws = new WebSocket(`${proto}//${location.host}/signal`);
       } catch {
-        reject(new SignalError("Não foi possível criar WebSocket.", 0));
+        reject(new SignalError("Não consegui falar com o PC.", 0));
         return;
       }
       this.ws.onopen = () => resolve();
@@ -38,13 +38,14 @@ export class SignalChannel {
       };
       this.ws.onclose = (ev) => {
         if (this.ws && this.ws.readyState !== WebSocket.OPEN && !this._authed) {
-          reject(new SignalError(`Conexão recusada (${ev.code}).`, ev.code));
+          reject(new SignalError("O PC não respondeu. Ele está ligado e na mesma rede Wi-Fi?", ev.code));
         }
       };
     });
   }
 
-  authenticate(pin) {
+  /** `cred`: { token } (do QR) ou { pin }. */
+  authenticate(cred) {
     return new Promise((resolve, reject) => {
       const ws = this.ws;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -72,7 +73,7 @@ export class SignalChannel {
         } else if (msg.type === "error" && msg.code === "locked") {
           cleanup();
           const secs = Math.ceil(msg.retry_after_s || 0);
-          reject(new SignalError(`Bloqueado por tentativas erradas - aguarde ${secs}s.`, 4029, msg.retry_after_s));
+          reject(new SignalError(`Muitas tentativas erradas. Aguarde ${secs}s.`, 4029, msg.retry_after_s));
         } else {
           cleanup();
           reject(new SignalError("Resposta inesperada do servidor.", 0));
@@ -82,11 +83,11 @@ export class SignalChannel {
       const onclose = (ev) => {
         cleanup();
         if (ev.code === 4003) {
-          reject(new SignalError("PIN inválido. Verifique no terminal do PC.", 4003));
+          reject(new SignalError(cred.token ? "O QR code expirou." : "PIN incorreto.", 4003));
         } else if (ev.code === 4005) {
-          reject(new SignalError("Servidor sem WebRTC (aiortc). Atualize o servidor.", 4005));
+          reject(new SignalError("O PC não conseguiu iniciar o WebRTC.", 4005));
         } else if (ev.code === 4029) {
-          reject(new SignalError("Bloqueado por tentativas erradas - aguarde.", 4029));
+          reject(new SignalError("Muitas tentativas erradas. Aguarde um minuto.", 4029));
         } else {
           reject(new SignalError(`Conexão encerrada durante autenticação (${ev.code}).`, ev.code));
         }
@@ -100,7 +101,7 @@ export class SignalChannel {
 
       ws.onmessage = onmessage;
       ws.onclose = onclose;
-      ws.send(JSON.stringify({ type: "auth", pin }));
+      ws.send(JSON.stringify({ type: "auth", ...cred }));
     });
   }
 
