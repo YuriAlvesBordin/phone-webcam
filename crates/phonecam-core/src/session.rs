@@ -143,17 +143,7 @@ impl Session {
             .map_err(|_| Error::Gst("elemento webrtcbin ausente (gst-plugins-bad)".into()))?;
         pipeline.add(&webrtc)?;
 
-        // Só rede local: sem STUN/TURN e com faixa de portas fixa (firewall).
-        if let Some(ice) = webrtc.property::<Option<gst::glib::Object>>("ice-agent") {
-            for (name, port) in [
-                ("min-rtp-port", ICE_PORT_MIN),
-                ("max-rtp-port", ICE_PORT_MAX),
-            ] {
-                if ice.find_property(name).is_some() {
-                    ice.set_property(name, port);
-                }
-            }
-        }
+        restrict_ice(&webrtc);
 
         let counters = Arc::new(Counters::default());
         let closed = Arc::new(AtomicBool::new(false));
@@ -301,6 +291,35 @@ impl Drop for Session {
         self.closed.store(true, Ordering::SeqCst);
         let _ = self.pipeline.set_state(gst::State::Null);
     }
+}
+
+/// Só rede local: sem STUN/TURN, sem UPnP (não pede ao roteador para abrir portas) e com
+/// faixa de portas UDP fixa (firewall).
+fn restrict_ice(webrtc: &gst::Element) {
+    let Some(ice) = webrtc.property::<Option<gst::glib::Object>>("ice-agent") else {
+        return;
+    };
+    for (name, port) in [("min-rtp-port", ICE_PORT_MIN), ("max-rtp-port", ICE_PORT_MAX)] {
+        if ice.find_property(name).is_some() {
+            ice.set_property(name, port);
+        }
+    }
+    if ice.find_property("agent").is_some() {
+        if let Some(agent) = ice.property::<Option<gst::glib::Object>>("agent") {
+            if agent.find_property("upnp").is_some() {
+                agent.set_property("upnp", false);
+            }
+        }
+    }
+}
+
+/// UPnP do agente ICE (só para teste).
+#[cfg(test)]
+fn upnp_enabled(webrtc: &gst::Element) -> Option<bool> {
+    let ice = webrtc.property::<Option<gst::glib::Object>>("ice-agent")?;
+    let agent = ice.property::<Option<gst::glib::Object>>("agent")?;
+    agent.find_property("upnp")?;
+    Some(agent.property::<bool>("upnp"))
 }
 
 /// Liga uma trilha recebida do `webrtcbin` à cadeia de decodificação.
@@ -456,6 +475,15 @@ async fn read_rtp_stats(webrtc: &gst::Element) -> (i64, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn ice_sem_upnp() {
+        gst::init().unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let session = Session::new(tx).unwrap();
+        assert_eq!(upnp_enabled(&session.webrtc), Some(false));
+        session.close().await;
+    }
 
     #[test]
     fn cadeias_por_codec() {

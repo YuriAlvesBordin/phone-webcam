@@ -1,114 +1,64 @@
 # PhoneCam
 
-Use your phone as a webcam for your PC. The phone only needs a browser:
-video and audio travel over the local network via WebRTC (H.264 + Opus),
-and the PC exposes them as regular camera and microphone devices that
-Discord, OBS, Zoom, Meet, Teams and friends can pick up.
+Use your phone as a webcam and microphone for your PC. The phone only needs a
+browser: video and audio travel over the local network with WebRTC (H.264 +
+Opus), and the PC exposes them as a regular camera and microphone that Discord,
+OBS, Zoom, Meet, Teams and friends can pick up.
 
 ```
-Phone (browser)                        PC (Linux/Windows/macOS)
-┌──────────────────────┐   WebRTC     ┌─────────────────────────────┐
-│ getUserMedia()       │ ───────────▶ │ aiortc decodes H.264/Opus   │
-│ H.264 hw encode      │  (LAN only)  │ pyvirtualcam / virtual mic  │
-└──────────────────────┘              └──────────────┬──────────────┘
-                                                     ▼
-                                    Discord / OBS / Zoom / Meet / Teams
+Phone (browser)                      PC (Linux)
+┌──────────────────────┐   WebRTC   ┌─────────────────────────────────┐
+│ getUserMedia()       │ ─────────▶ │ GStreamer webrtcbin             │
+│ H.264 hw encode      │ (LAN only) │  ├─ H.264 -> v4l2loopback camera │
+│ Opus mic             │            │  └─ Opus  -> PipeWire microphone │
+└──────────────────────┘            └─────────────────────────────────┘
 ```
 
-Most phone-as-webcam tools stream JPEG frames over a plain WebSocket. It
-works, but it wastes bandwidth and the delay creeps up during a call.
-PhoneCam uses WebRTC end to end: the phone encodes with its hardware
-H.264 encoder, the bitrate adapts to Wi-Fi conditions, and audio shares
-the same connection as an Opus track.
+Version 3 is a rewrite in Rust (the Python/aiortc version is in the git history).
+The phone web client and the signaling protocol are unchanged.
 
-> **Tested on Arch Linux.** Development and testing happen on Arch Linux
-> (KDE Plasma, PipeWire). Windows and macOS are documented but untested;
-> reports and patches for other platforms are welcome.
+> **Tested on Arch Linux** (Hyprland, PipeWire). The Rust remaster targets
+> Linux; the old Windows/macOS support relied on Python libraries.
 
-## Features
+## What changed in the rewrite
 
-- H.264 hardware encoding on the phone: low bandwidth, stable latency
-- Microphone over the same connection, with echo cancellation from the browser
-- Native camera zoom when available, digital zoom fallback, front/back switch, torch
-- Live stats (bitrate, FPS, RTT, packet loss) on a tap
-- PIN authentication, HTTPS with a self-signed certificate, strict CSP
-- Auto reconnect, wake lock, pause/resume
-- Linux (v4l2loopback + PipeWire/PulseAudio), Windows (OBS Virtual Camera + VB-Cable), macOS (OBS Virtual Camera + BlackHole)
-- Works on Android and iOS: any browser with WebRTC
-
-## Requirements
-
-PC:
-
-- Python 3.10 to 3.13
-- Linux: the `v4l2loopback` module for the virtual camera; PipeWire or PulseAudio for the virtual microphone (both preinstalled on most distros)
-- Windows: [OBS Studio](https://obsproject.com/download) (open it once, click "Start Virtual Camera", close it); [VB-Cable](https://vb-audio.com/Cable/) for audio
-- macOS: [OBS Studio](https://obsproject.com/download), same "Start Virtual Camera" step; [BlackHole 2ch](https://existential.audio/blackhole/) for audio
-
-Phone: a browser with WebRTC, on the same Wi-Fi as the PC.
+- **GStreamer `webrtcbin`** does ICE, DTLS, SRTP, NACK/PLI and the jitter buffer; decoding runs in native code instead of per-frame Python and NumPy copies.
+- **The virtual camera never disappears.** The v4l2 and PipeWire outputs stay open while the service is on, so Discord and OBS keep the camera between reconnections (black picture while no phone is connected).
+- **Letterboxing** instead of stretching when the phone sends another aspect ratio.
+- **No open port while off.** The service starts disabled and only listens after `start`.
+- **D-Bus service** (`dev.aqua.PhoneCam`) with live status: the aqua top bar shows an icon, a QR code, the PIN and stats, with a toggle.
+- **Fixed UDP port range** (40000-40100) for firewalls, a certificate that regenerates when your IP changes, and `phonecam doctor`.
+- One executable with the phone UI embedded.
 
 ## Install
 
-```bash
-git clone https://github.com/YuriAlvesBordin/phone-webcam.git
-cd phone-webcam
+Requirements: a Rust toolchain, GStreamer (tested with 1.28) with `gst-plugins-good`,
+`gst-plugins-bad` (webrtcbin, libnice) and `gst-libav`, PipeWire with
+`pipewire-pulse` (or PulseAudio), and `v4l2loopback` for the camera.
 
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+```sh
+packaging/install.sh                 # user: binary + D-Bus service
+sudo packaging/install-system.sh     # root, once: v4l2loopback with the right options
+phonecam doctor                      # check everything
 ```
 
-Alternatively, `pip install .` inside the repository adds a `phonecam`
-command to the virtualenv.
+Details in [packaging/README.md](packaging/README.md).
 
-## Run
+## Use
 
-```bash
-python run.py                     # or: python -m phonecam
+```sh
+phonecam serve        # foreground, QR code in the terminal
+phonecam start        # or: turn it on in the aqua top bar
 ```
 
-The terminal prints a QR code and a 6-digit PIN. On the phone:
+1. Connect the phone to the same Wi-Fi as the PC.
+2. Scan the QR code (or type the URL) and accept the self-signed certificate warning. This is expected, see [Security](#security).
+3. Type the 6-digit PIN and allow camera access.
+4. Select **PhoneCam** as the camera and **PhoneCam Mic** as the microphone in your app.
 
-1. Connect to the same Wi-Fi as the PC
-2. Open the URL (scan the QR code or type it)
-3. Accept the self-signed certificate warning. This is expected, see [Security](#security)
-4. Type the PIN shown in the terminal
-5. Allow camera access
-
-Then select the devices in the app you use:
-
-| OS | Camera | Microphone |
-|----|--------|------------|
-| Linux | PhoneCam (`/dev/video10`) | PhoneCam Mic |
-| Windows | OBS Virtual Camera | CABLE Output |
-| macOS | OBS Virtual Camera | BlackHole 2ch |
-
-## Options
-
-```bash
-python run.py [options]
-
-  --host 0.0.0.0       # Bind address
-  --port 8765          # TCP port
-  --width 1280         # Virtual camera resolution
-  --height 720
-  --fps 30             # Target FPS
-  --bitrate 4000       # Max video bitrate (kbps)
-  --pin 123456         # Fixed PIN (default: random each run)
-  --qr-pin             # Embed PIN in the QR URL (auto-connect; less secure)
-  --no-https           # Disable HTTPS (only for localhost)
-  --no-audio           # Disable phone microphone
-  -v                   # Verbose (debug) logging
-```
-
-Examples:
-
-```bash
-python run.py --width 1920 --height 1080 --fps 60 --bitrate 8000   # 1080p60
-python run.py --no-audio                                           # video only
-python run.py --pin 424242 --port 9000                             # automation
-python run.py --width 640 --height 480 --bitrate 1500              # weak Wi-Fi
-```
+Options (`phonecam serve --help`): `--port`, `--width`, `--height`, `--fps`,
+`--bitrate`, `--pin`, `--qr-pin`, `--no-https`, `--no-audio`, `--device`.
+Persistent settings go in `~/.config/phonecam/config.toml`.
 
 ## Phone controls
 
@@ -124,104 +74,53 @@ python run.py --width 640 --height 480 --bitrate 1500              # weak Wi-Fi
 
 ## How it works
 
-1. The PC runs a FastAPI server (HTTPS by default) with a WebSocket signaling endpoint.
+1. The PC runs an HTTPS server (axum + rustls) with a WebSocket signaling endpoint.
 2. The phone authenticates with the PIN, sent as the first WebSocket message, never in the URL.
-3. SDP and ICE candidates are exchanged, and the WebRTC peer connection uses host candidates only (LAN, no STUN/TURN).
-4. [aiortc](https://github.com/aiortc/aiortc) decodes the incoming tracks: H.264 frames go to [pyvirtualcam](https://github.com/tmo1/pyvirtualcam), Opus audio is decoded to mono PCM and written to the virtual microphone.
-5. A watchdog closes sessions that stop sending frames for 15s. A new connection kicks the previous client. Stats go back to the phone every 2s.
-
-Source layout:
+3. SDP and ICE candidates are exchanged; the connection uses host candidates only (LAN, no STUN/TURN).
+4. `webrtcbin` receives the tracks. Each track gets a depay → decoder chain that feeds `intervideosink`/`interaudiosink` channels.
+5. Persistent output pipelines read those channels: video → `videoscale`/`videorate` → `v4l2sink`; audio → `pulsesink` into a null sink exposed as the **PhoneCam Mic** source.
+6. A watchdog closes sessions that stop sending frames for 15 s. A new connection kicks the previous client. Stats go back to the phone every 2 s.
 
 ```
-phonecam/
-├── cli.py          # arguments, banner, uvicorn startup
-├── config.py       # Config dataclass + named constants
-├── security.py     # PIN (constant-time), rate limiter, Origin check
-├── signaling.py    # WebSocket signaling protocol
-├── webrtc.py       # aiortc session: tracks, watchdog, stats
-├── virtualcam.py   # pyvirtualcam wrapper + health check
-├── audio/          # virtual mic sinks (PipeWire/PulseAudio, BlackHole, VB-Cable)
-└── server.py       # FastAPI app, routes, security headers
-static/             # phone UI (HTML/CSS/ES modules)
+crates/
+├── phonecam-core/   # config, security, TLS, signaling, WebRTC session, outputs, controller
+│   └── tests/e2e.rs # fake phone (H.264 + Opus) over a real WebSocket
+└── phonecam/        # CLI, D-Bus service, doctor
+static/              # phone UI (HTML/CSS/ES modules), embedded in the binary
+packaging/           # install scripts, D-Bus service, v4l2loopback config
 ```
 
 ## Security
 
-Threat model: a trusted home LAN. This is not hardened against hostile
-networks.
+Threat model: a trusted home LAN. This is not hardened against hostile networks.
 
-- HTTPS uses a self-signed certificate, so the browser will warn you. Check
-  that the address is really your PC's IP before accepting.
-- The 6-digit PIN authenticates the signaling handshake. Comparison is
-  constant-time; 5 failed attempts lock the IP out for 60s.
-- The QR code does not contain the PIN by default. `--qr-pin` embeds it for
-  convenience, at the cost of security.
-- Security headers: CSP, `X-Content-Type-Options`, `X-Frame-Options`. The
-  Origin is validated on WebSocket upgrades and signaling messages are
-  size limited.
-- Nothing leaves the network: no STUN/TURN, no telemetry, nothing persisted.
+- HTTPS with a self-signed certificate (stored with mode 0600), so the browser warns you. Check that the address is really your PC's IP before accepting.
+- The 6-digit PIN authenticates the signaling handshake. Comparison is constant-time; 5 failed attempts lock the IP out for 60 s.
+- The QR code does not contain the PIN unless you pass `--qr-pin`.
+- Security headers: CSP, `X-Content-Type-Options`, `X-Frame-Options`. The Origin is validated on WebSocket upgrades and signaling messages are size limited.
+- The server is off by default and closes its port when stopped. Nothing leaves the network: no STUN/TURN, no telemetry.
 
 ## Troubleshooting
 
-**No virtual camera on Linux.** Load the module with `exclusive_caps=1`
-(Discord needs it):
+Run `phonecam doctor` first.
 
-```bash
-sudo modprobe v4l2loopback exclusive_caps=1 video_nr=10 card_label="PhoneCam"
-v4l2-ctl --list-devices        # should list PhoneCam on /dev/video10
-```
+**Discord does not list the camera.** `cat /sys/module/v4l2loopback/parameters/exclusive_caps` must print `Y` (or `1`). Reload the module with `exclusive_caps=1`.
 
-Package names: `v4l2loopback-dkms` on Arch and Debian/Ubuntu, `v4l2loopback`
-on Fedora.
+**No microphone.** Needs `pipewire-pulse` (or PulseAudio): `pactl info` must work. The source is called "PhoneCam Mic".
 
-**No virtual camera on Windows/macOS.** Open OBS once, click "Start Virtual
-Camera", close OBS.
+**Phone cannot open the URL.** Same Wi-Fi (guest networks isolate clients), and open TCP 8765 and UDP 40000-40100 if you run a firewall.
 
-**Discord does not list the camera (Linux).** Check that
-`/sys/module/v4l2loopback/parameters/exclusive_caps` contains `1`. If not,
-reload the module with the option set.
+**Browser blocks the camera.** `getUserMedia` needs a secure context: use the `https://` URL and accept the certificate.
 
-**No microphone on the PC.** Linux: install `pipewire` or
-`pulseaudio-utils`. Windows: VB-Cable. macOS: BlackHole. You can test the
-capture side at `https://<pc-ip>:8765/audio-test`, which records 3 seconds
-from the virtual mic.
+**Stutter or lag.** Prefer 5 GHz Wi-Fi and lower the ceiling: `--bitrate 2000` or `--width 960 --height 540`.
 
-**Browser blocks the camera.** getUserMedia needs a secure context. Use the
-`https://` URL and accept the certificate.
-
-**Phone cannot open the URL.** Same Wi-Fi (guest networks usually isolate
-clients) and check the firewall: Windows Defender, `sudo ufw allow 8765/tcp`,
-macOS firewall.
-
-**Stutter or lag.** Prefer 5GHz Wi-Fi, keep the phone close to the router,
-and lower the ceiling: `--bitrate 2000` or `--width 960 --height 540`.
-
-**Stream stops when the screen turns off.** The page holds a Wake Lock
-(Chrome Android 84+, Safari iOS 16.4+). If the browser drops it, tap the
-banner to re-enable. Reconnects use a backoff that goes from 1s up to 15s.
-
-**Test the virtual camera.** Linux: `ffplay /dev/video10` or `cheese`.
-Windows/macOS: the native Camera app or OBS.
-
-## FAQ
-
-**Does it work on iPhone?** Yes, Safari and Chrome on iOS support WebRTC.
-
-**Can I use it over the internet?** No, the connection is LAN-only (host
-candidates). Put phone and PC on the same VPN (WireGuard, Tailscale) and it
-works as if they were local.
-
-**What about battery?** Camera, Wi-Fi and hardware encoding drain it. Keep
-the phone plugged in for long sessions.
-
-**How much latency?** Usually under 150ms of video on 5GHz. Audio is lower.
+**Test the virtual camera.** `ffplay /dev/video10` or `cheese`.
 
 ## Development
 
-```bash
-pip install -e ".[dev]"
-ruff check . && black --check .
-pytest
+```sh
+cargo test --workspace      # unit tests + end-to-end with a fake phone
+cargo clippy --workspace --all-targets
 ```
 
 ## License
