@@ -58,11 +58,12 @@ pub fn find(wanted: Option<&str>) -> Option<Device> {
     pick(&scan(Path::new("/sys/class/video4linux")), wanted)
 }
 
-/// `exclusive_caps` ligado em todos os dispositivos? (Discord/Chrome só listam assim.)
+/// `exclusive_caps` ligado no primeiro dispositivo (o `PhoneCam`)? Discord/Chrome só listam assim.
+/// O parâmetro é uma lista de 8 posições; só as dos dispositivos criados importam.
 pub fn exclusive_caps_ok() -> Option<bool> {
     let text =
         std::fs::read_to_string("/sys/module/v4l2loopback/parameters/exclusive_caps").ok()?;
-    Some(text.trim().split(',').all(|v| matches!(v, "Y" | "y" | "1")))
+    Some(matches!(text.trim().split(',').next(), Some("Y" | "y" | "1")))
 }
 
 /// O módulo está carregado?
